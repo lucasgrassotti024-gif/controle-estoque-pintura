@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==============================================================================
+    // REGRAS DO CLOUD FIRESTORE - SISTEMA CONTROLE DE ESTOQUE
+    // PROJETO: controle-custo-4696f
+    // ==============================================================================
+    // FASE 17 - BACKEND SERVER-SIDE COMO ÚNICA AUTORIDADE DE ESCRITA
+    // 
+    // O Firestore Client SDK NÃO possui permissão de escrita nas coleções críticas.
+    // Todas as mutações (entradas, saídas, conferências, produtos, lotes) são
+    // orquestradas exclusivamente pelo Firebase Admin SDK no servidor Next.js
+    // (Route Handlers em /api/estoque/* e /api/produtos/*).
+    //
+    // O Firebase Admin SDK no servidor ignora estas Security Rules, garantindo a
+    // execução de transações com controle contábil fechado.
+    // O Client SDK no navegador mantém permissão SOMENTE DE LEITURA (read).
+    // ==============================================================================
+
+    // Coleção: products (Produtos / Materiais)
+    // Leitura: pública/aberta para o Client SDK montar telas e formulários.
+    // Escrita: proibida para o Client SDK. Mutações ocorrem via Route Handlers e Admin SDK.
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // Coleção: lots (Lotes de Materiais)
+    // Leitura: pública/aberta para o Client SDK listar lotes nos seletores.
+    // Escrita: proibida para o Client SDK. Gerenciamento de lotes/saldos é estritamente server-side.
+    match /lots/{lotId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // Coleção: movements (Ledger Imutável de Movimentações)
+    // Leitura: pública/aberta para exibição de histórico e auditoria.
+    // Escrita: proibida para o Client SDK. Mutações ocorrem somente via transação server-side.
+    match /movements/{movementId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // Coleção: physicalCounts (Histórico de Conferências Físicas)
+    // Leitura: pública/aberta para exibição de histórico de conferências.
+    // Escrita: proibida para o Client SDK. Mutações ocorrem somente via transação server-side.
+    match /physicalCounts/{countId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
