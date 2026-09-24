@@ -341,6 +341,28 @@ export async function executarTestesServerSide() {
     asserir(duplicadoDetectado, '17. Servidor valida e bloqueia duplicação de código SKU na criação/edição');
   }
 
+  // 13. Testes das Operações de Leitura Server-side (Fase 19.1)
+  {
+    // Teste de busca por ID com parâmetro vazio
+    const prodVazio = await stockServerService.buscarProdutoPorId('');
+    asserir(prodVazio === null, '18. Leitura server-side de produto com ID vazio retorna null');
+
+    const prodInvalido = await stockServerService.buscarProdutoPorId('   ');
+    asserir(prodInvalido === null, '19. Leitura server-side de produto com ID em branco retorna null');
+
+    // Teste de busca de lote por ID com parâmetro vazio
+    const loteVazio = await stockServerService.buscarLotePorId('');
+    asserir(loteVazio === null, '20. Leitura server-side de lote com ID vazio retorna null');
+
+    // Teste de busca de lote por número com produto_id vazio
+    const loteNumVazio = await stockServerService.buscarLotePorNumero('', 'L-1');
+    asserir(loteNumVazio === null, '21. Leitura server-side de lote por número sem produto_id retorna null');
+
+    // Teste de listagem de lotes com produto_id vazio
+    const lotesVazios = await stockServerService.listarLotesPorProduto('');
+    asserir(Array.isArray(lotesVazios) && lotesVazios.length === 0, '22. Listagem de lotes sem produto_id retorna array vazio');
+  }
+
   console.log('\n======================================================================');
   console.log(`TOTAL DE TESTES SERVER-SIDE EXECUTADOS: ${sucessos + falhas}`);
   console.log(`PASSOU: ${sucessos} | FALHAS: ${falhas}`);

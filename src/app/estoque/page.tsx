@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 export default function EstoquePage() {
-  const { usuario } = useAuth();
+  const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
   const podeMovimentar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
 
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -64,8 +64,10 @@ export default function EstoquePage() {
   }
 
   useEffect(() => {
-    carregarProdutos();
-  }, [categoria, apenasAtivos]);
+    if (!carregandoAuth && autenticado) {
+      carregarProdutos();
+    }
+  }, [categoria, apenasAtivos, carregandoAuth, autenticado]);
 
   // Lista processada e filtrada com cálculo determinístico de situação
   const itensComSituacao = useMemo(() => {

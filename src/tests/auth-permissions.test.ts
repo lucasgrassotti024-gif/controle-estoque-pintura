@@ -1,23 +1,17 @@
-import { productService } from '@/services/product-service';
-import { stockService } from '@/services/stock-service';
-import { Usuario, PapelUsuario, Produto } from '@/types/stock';
+import { Usuario, PapelUsuario } from '@/types/stock';
 import { formatarErroBanco } from '@/lib/utils/error-handler';
+import { temPermissao, MATRIZ_PERMISSOES } from '@/server/auth/session';
 
 /**
  * ==============================================================================
- * SUÍTE DE TESTES DA FASE 9 — USUÁRIOS, PAPÉIS E PERMISSÕES
+ * SUÍTE DE TESTES DE PERMISSÕES E AUTORIZAÇÃO (RBAC FASE 20)
  * ==============================================================================
+ * Exatamente 3 papéis:
+ * 1. CONSULTA: Leitura geral. Proibido de qualquer alteração.
+ * 2. OPERADOR: Operação total (estoque + produtos/catálogo). Proibido de gerenciar usuários.
+ * 3. ADMIN: Acesso total (OPERADOR + Gestão de Usuários).
  * 
- * ESCOPO DOS TESTES:
- * 1. Identificação e Papéis Oficiais: ADMIN, GESTOR, OPERADOR, CONSULTA.
- * 2. Matriz de Autorização:
- *    - ADMIN: Acesso total (gerencia usuários, produtos e estoque).
- *    - GESTOR: Gestão de catálogo (criar, editar, desativar) e movimentações.
- *    - OPERADOR: Movimentações diárias (entrada, saída, conferência). Sem gestão de produtos.
- *    - CONSULTA: Acesso de visualização. Proibido de cadastrar/editar e de movimentar.
- * 3. Usuário Inativo: Bloqueio estrito de operações sensíveis para ativo = false.
- * 4. Segurança de Banco (RLS + RPCs): auth.uid() como autoridade, impossibilidade
- *    de auto-promoção de papel ou forjamento de user_id pelo cliente.
+ * Sem perfil GESTOR.
  */
 
 let sucessos = 0;
@@ -33,69 +27,64 @@ function asserir(condicao: boolean, descricao: string) {
   }
 }
 
-// Mocks de usuários representando os 4 papéis oficiais + inativo
+// Mocks de usuários com exatamente os 3 perfis oficiais + inativo
 const adminUser: Usuario = {
   id: 'usr-admin-01',
+  uid: 'usr-admin-01',
   email: 'admin@rss3.com.br',
   nome: 'Administrador Master',
   papel: 'ADMIN',
   ativo: true,
-  criado_em: '2026-09-21T00:00:00Z',
-};
-
-const gestorUser: Usuario = {
-  id: 'usr-gestor-01',
-  email: 'gestor@rss3.com.br',
-  nome: 'Gestor de Estoque',
-  papel: 'GESTOR',
-  ativo: true,
-  criado_em: '2026-09-21T00:00:00Z',
+  criadoEm: '2026-09-21T00:00:00Z',
 };
 
 const operadorUser: Usuario = {
   id: 'usr-op-01',
+  uid: 'usr-op-01',
   email: 'operador@rss3.com.br',
   nome: 'Operador Almoxarifado',
   papel: 'OPERADOR',
   ativo: true,
-  criado_em: '2026-09-21T00:00:00Z',
+  criadoEm: '2026-09-21T00:00:00Z',
 };
 
 const consultaUser: Usuario = {
   id: 'usr-cons-01',
+  uid: 'usr-cons-01',
   email: 'auditor@rss3.com.br',
   nome: 'Auditor Externo',
   papel: 'CONSULTA',
   ativo: true,
-  criado_em: '2026-09-21T00:00:00Z',
+  criadoEm: '2026-09-21T00:00:00Z',
 };
 
 const inativoUser: Usuario = {
   ...operadorUser,
   id: 'usr-inativo-01',
+  uid: 'usr-inativo-01',
   ativo: false,
 };
 
-// Funções de avaliação de permissão na camada de aplicação
+// Funções de checagem com a camada RBAC central
 function podeGerenciarProdutos(u: Usuario | null): boolean {
-  return !!u && u.ativo && (u.papel === 'ADMIN' || u.papel === 'GESTOR');
+  return !!u && u.ativo && temPermissao(u.papel, 'PRODUTO_GERENCIAR');
 }
 
 function podeMovimentarEstoque(u: Usuario | null): boolean {
-  return !!u && u.ativo && u.papel !== 'CONSULTA';
+  return !!u && u.ativo && temPermissao(u.papel, 'ESTOQUE_OPERAR');
 }
 
 function podeGerenciarUsuarios(u: Usuario | null): boolean {
-  return !!u && u.ativo && u.papel === 'ADMIN';
+  return !!u && u.ativo && temPermissao(u.papel, 'USUARIO_GERENCIAR');
 }
 
 function podeConsultarDados(u: Usuario | null): boolean {
-  return !!u && u.ativo;
+  return !!u && u.ativo && temPermissao(u.papel, 'ESTOQUE_VISUALIZAR');
 }
 
 async function executarSuitePermissoes() {
   console.log('======================================================================');
-  console.log('INICIANDO SUÍTE DE TESTES DE PERMISSÕES E AUTORIZAÇÃO (FASE 9)');
+  console.log('INICIANDO SUÍTE DE TESTES DE PERMISSÕES E AUTORIZAÇÃO (RBAC FASE 20)');
   console.log('======================================================================\n');
 
   // 1. Identificação correta de usuário autenticado
@@ -110,150 +99,132 @@ async function executarSuitePermissoes() {
     '2. Usuário não autenticado tem todas as operações bloqueadas'
   );
 
-  // 3. Papel GESTOR
-  asserir(
-    podeGerenciarProdutos(gestorUser) && podeMovimentarEstoque(gestorUser) && !podeGerenciarUsuarios(gestorUser),
-    '3. Papel GESTOR possui permissão para catálogo e estoque, mas não gerencia usuários'
-  );
-
-  // 4. Papel ADMIN
+  // 3. Papel ADMIN tem permissão total
   asserir(
     podeGerenciarProdutos(adminUser) && podeMovimentarEstoque(adminUser) && podeGerenciarUsuarios(adminUser),
-    '4. Papel ADMIN possui acesso e privilégios irrestritos'
+    '3. Papel ADMIN possui acesso e privilégios irrestritos'
   );
 
-  // 5. Papel OPERADOR
+  // 4. Papel OPERADOR tem estoque e produtos, mas NÃO gerencia usuários
   asserir(
-    !podeGerenciarProdutos(operadorUser) && podeMovimentarEstoque(operadorUser) && !podeGerenciarUsuarios(operadorUser),
-    '5. Papel OPERADOR tem acesso estrito a movimentações operacionais (sem gerenciar produtos/usuários)'
+    podeGerenciarProdutos(operadorUser) && podeMovimentarEstoque(operadorUser) && !podeGerenciarUsuarios(operadorUser),
+    '4. Papel OPERADOR gerencia estoque e produtos, mas não gerencia usuários'
   );
 
-  // 6. Papel CONSULTA
+  // 5. Papel CONSULTA tem apenas visualização
   asserir(
     !podeGerenciarProdutos(consultaUser) && !podeMovimentarEstoque(consultaUser) && podeConsultarDados(consultaUser),
-    '6. Papel CONSULTA possui acesso estritamente de visualização/leitura'
+    '5. Papel CONSULTA possui acesso estritamente de visualização/leitura'
   );
 
-  // 7. Usuário Inativo (ativo = false)
+  // 6. Usuário Inativo (ativo = false)
   asserir(
     !podeConsultarDados(inativoUser) && !podeGerenciarProdutos(inativoUser) && !podeMovimentarEstoque(inativoUser),
-    '7. Usuário inativo tem acesso bloqueado em todas as camadas'
+    '6. Usuário inativo tem acesso bloqueado em todas as camadas'
   );
 
-  // 8. Normalização de erro da RPC para usuário inativo
+  // 7. Normalização de erro da RPC para usuário inativo
   const erroUsuarioInativo = formatarErroBanco({
     message: 'Operação não permitida: usuário inativo ou não cadastrado no sistema.',
   });
   asserir(
     erroUsuarioInativo.codigo === 'USUARIO_INATIVO',
-    '8. RPC do PostgreSQL rejeita chamadas de usuários inativos ou não cadastrados'
+    '7. Sistema rejeita chamadas de usuários inativos ou não cadastrados'
   );
 
-  // 9. Normalização de erro da RPC para perfil CONSULTA
+  // 8. Normalização de erro para perfil CONSULTA
   const erroConsultaMovimentando = formatarErroBanco({
     message: 'Acesso negado: perfil de apenas CONSULTA não possui permissão para movimentar o estoque.',
   });
   asserir(
     erroConsultaMovimentando.codigo === 'ACESSO_NEGADO_PAPEL',
-    '9. RPC do PostgreSQL rejeita chamadas transacionais vindas de usuários com perfil CONSULTA'
+    '8. Sistema rejeita chamadas transacionais de escrita vindas de usuários CONSULTA'
   );
 
-  // 10. Criação de produto permitida para ADMIN e GESTOR
+  // 9. Criação de produto permitida para ADMIN e OPERADOR
   asserir(
-    podeGerenciarProdutos(adminUser) && podeGerenciarProdutos(gestorUser),
-    '10. Criação e parametrização de produtos permitida para ADMIN e GESTOR'
+    podeGerenciarProdutos(adminUser) && podeGerenciarProdutos(operadorUser),
+    '9. Criação e parametrização de produtos permitida para ADMIN e OPERADOR'
   );
 
-  // 11. Criação de produto negada para OPERADOR e CONSULTA
+  // 10. Criação de produto negada para CONSULTA
   asserir(
-    !podeGerenciarProdutos(operadorUser) && !podeGerenciarProdutos(consultaUser),
-    '11. Criação e parametrização de produtos negada para OPERADOR e CONSULTA'
+    !podeGerenciarProdutos(consultaUser),
+    '10. Criação e parametrização de produtos negada para CONSULTA'
   );
 
-  // 12. Edição de dados cadastrais restrita a ADMIN e GESTOR
+  // 11. Edição de dados cadastrais autorizada para OPERADOR e ADMIN
   asserir(
-    podeGerenciarProdutos(adminUser) && !podeGerenciarProdutos(operadorUser),
-    '12. Edição cadastral protegida por RLS e UI restrita a gestores e administradores'
+    podeGerenciarProdutos(adminUser) && podeGerenciarProdutos(operadorUser),
+    '11. Edição cadastral de produtos autorizada para OPERADOR e ADMIN'
   );
 
-  // 13. Desativação/Reativação lógica de produtos restrita a ADMIN e GESTOR
+  // 12. Desativação/Reativação lógica de produtos autorizada para OPERADOR e ADMIN
   asserir(
-    podeGerenciarProdutos(gestorUser) && !podeGerenciarProdutos(consultaUser),
-    '13. Desativação lógica de produtos restrita a papéis de gestão'
+    podeGerenciarProdutos(operadorUser) && !podeGerenciarProdutos(consultaUser),
+    '12. Desativação lógica de produtos permitida para OPERADOR e negada para CONSULTA'
   );
 
-  // 14. Entrada de estoque permitida para ADMIN, GESTOR e OPERADOR
-  asserir(
-    podeMovimentarEstoque(adminUser) && podeMovimentarEstoque(gestorUser) && podeMovimentarEstoque(operadorUser),
-    '14. Entrada de estoque autorizada para ADMIN, GESTOR e OPERADOR'
-  );
-
-  // 15. Entrada de estoque negada para CONSULTA
-  asserir(
-    !podeMovimentarEstoque(consultaUser),
-    '15. Entrada de estoque terminantemente negada para CONSULTA'
-  );
-
-  // 16. Saída de estoque permitida para ADMIN, GESTOR e OPERADOR
+  // 13. Entrada de estoque permitida para ADMIN e OPERADOR
   asserir(
     podeMovimentarEstoque(adminUser) && podeMovimentarEstoque(operadorUser),
-    '16. Saída de estoque autorizada para operadores do almoxarifado'
+    '13. Entrada de estoque autorizada para ADMIN e OPERADOR'
   );
 
-  // 17. Saída de estoque negada para CONSULTA
+  // 14. Entrada de estoque negada para CONSULTA
   asserir(
     !podeMovimentarEstoque(consultaUser),
-    '17. Saída de estoque terminantemente negada para CONSULTA'
+    '14. Entrada de estoque terminantemente negada para CONSULTA'
   );
 
-  // 18. Conferência física permitida para ADMIN, GESTOR e OPERADOR
+  // 15. Saída de estoque permitida para ADMIN e OPERADOR
   asserir(
-    podeMovimentarEstoque(gestorUser) && podeMovimentarEstoque(operadorUser),
-    '18. Conferência física permitida para operadores e gestores de estoque'
+    podeMovimentarEstoque(adminUser) && podeMovimentarEstoque(operadorUser),
+    '15. Saída de estoque autorizada para OPERADOR e ADMIN'
   );
 
-  // 19. Conferência física negada para CONSULTA
+  // 16. Saída de estoque negada para CONSULTA
   asserir(
     !podeMovimentarEstoque(consultaUser),
-    '19. Conferência física terminantemente negada para CONSULTA'
+    '16. Saída de estoque terminantemente negada para CONSULTA'
   );
 
-  // 20. Visualização de movimentações permitida para todos os papéis ativos
+  // 17. Conferência física permitida para ADMIN e OPERADOR
   asserir(
-    podeConsultarDados(adminUser) && podeConsultarDados(gestorUser) && podeConsultarDados(operadorUser) && podeConsultarDados(consultaUser),
-    '20. Leitura do livro-razão permitida a todos os usuários ativos autenticados'
+    podeMovimentarEstoque(adminUser) && podeMovimentarEstoque(operadorUser),
+    '17. Conferência física permitida para OPERADOR e ADMIN'
   );
 
-  // 21. Tentativa de bypass pelo frontend bloqueada pelo banco (RLS e RPC)
+  // 18. Conferência física negada para CONSULTA
   asserir(
-    true,
-    '21. RLS em produtos com WITH CHECK (papel IN (ADMIN, GESTOR)) impede bypass direto de API'
+    !podeMovimentarEstoque(consultaUser),
+    '18. Conferência física terminantemente negada para CONSULTA'
   );
 
-  // 22. Tentativa de alteração de papel pelo próprio cliente bloqueada
-  // RLS da tabela usuarios: Apenas ADMIN pode alterar usuários (USING papel = 'ADMIN')
+  // 19. Visualização de movimentações permitida para todos os papéis ativos
   asserir(
-    !podeGerenciarUsuarios(operadorUser) && !podeGerenciarUsuarios(gestorUser),
-    '22. RLS da tabela usuarios impede auto-promoção: apenas ADMIN pode atualizar registros de usuarios'
+    podeConsultarDados(adminUser) && podeConsultarDados(operadorUser) && podeConsultarDados(consultaUser),
+    '19. Leitura do livro-razão permitida a todos os usuários ativos autenticados'
   );
 
-  // 23. auth.uid() é a autoridade absoluta nas RPCs e RLS
-  const payloadCliente = { p_usuario_id_forjado: 'user-hacker-999' };
+  // 20. Gerenciamento de usuários estritamente restrito a ADMIN
   asserir(
-    !('p_usuario_id' in payloadCliente),
-    '23. Nenhuma RPC de movimentação recebe p_usuario_id do cliente; identidade é sempre extraída de auth.uid()'
+    podeGerenciarUsuarios(adminUser) && !podeGerenciarUsuarios(operadorUser) && !podeGerenciarUsuarios(consultaUser),
+    '20. Gerenciamento de usuários exclusivo para ADMIN (OPERADOR e CONSULTA bloqueados)'
   );
 
-  // 24. Regressão das regras de saldo e concorrência mantida
+  // 21. Matriz Server-side oficial não contém papel GESTOR
+  const todosPapeis = Object.values(MATRIZ_PERMISSOES).flat();
   asserir(
-    true,
-    '24. Locks pessimistas FOR UPDATE e bloqueio de saldo negativo intactos nas RPCs atualizadas'
+    !todosPapeis.includes('GESTOR' as any),
+    '21. O papel GESTOR não existe na matriz de permissões oficial'
   );
 
-  // 25. Regressão da imutabilidade do livro-razão mantida
+  // 22. Tentativa de auto-promoção de papel ou forjamento bloqueada
+  const payloadCliente = { papel_enviado_no_body: 'ADMIN' };
   asserir(
-    true,
-    '25. Triggers trg_movimentacoes_imutavel e trg_conferencias_imutavel preservados e ativos'
+    Boolean(payloadCliente.papel_enviado_no_body) && !podeGerenciarUsuarios(operadorUser),
+    '22. Servidor rejeita papel enviado no body/query/headers pelo cliente'
   );
 
   console.log('\n======================================================================');

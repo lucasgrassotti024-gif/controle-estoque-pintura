@@ -1,16 +1,3 @@
-import { db } from '@/lib/firebase/config';
-import { COLLECTIONS } from '@/lib/firebase/firestore';
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  query, 
-  where, 
-  orderBy, 
-  limit as firestoreLimit,
-  runTransaction 
-} from 'firebase/firestore';
 import { 
   RegistrarEntradaDTO, 
   RegistrarSaidaDTO, 
@@ -98,62 +85,28 @@ export const stockRepository = {
   },
 
   // ============================================================================
-  // CONSULTAS DE HISTÓRICO (SOMENTE LEITURA)
+  // CONSULTAS DE HISTÓRICO (SOMENTE LEITURA VIA SERVER-SIDE ROUTE HANDLERS)
   // ============================================================================
 
   async listarMovimentacoes(filtro?: FiltroMovimentacoesDTO): Promise<Movimentacao[]> {
     try {
-      const colRef = collection(db, COLLECTIONS.MOVEMENTS);
-      let q = query(colRef, orderBy('criado_em', 'desc'));
+      const params = new URLSearchParams();
+      if (filtro?.produto_id) params.set('produto_id', filtro.produto_id);
+      if (filtro?.lote_id) params.set('lote_id', filtro.lote_id);
+      if (filtro?.tipo) params.set('tipo', filtro.tipo);
+      if (filtro?.data_inicio) params.set('data_inicio', filtro.data_inicio);
+      if (filtro?.data_fim) params.set('data_fim', filtro.data_fim);
+      if (filtro?.limite) params.set('limite', String(filtro.limite));
 
-      if (filtro?.limite) {
-        q = query(q, firestoreLimit(filtro.limite));
+      const url = `/api/estoque/movimentacoes${params.toString() ? `?${params.toString()}` : ''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao listar movimentações.');
       }
 
-      const snapshot = await getDocs(q);
-      let lista: Movimentacao[] = snapshot.docs.map((d) => ({
-        ...(d.data() as Movimentacao),
-        id: d.id,
-      }));
-
-      // Filtros em memória (para consultas dinâmicas sem explosão de índices compostos)
-      if (filtro?.produto_id) {
-        lista = lista.filter((m) => m.produto_id === filtro.produto_id);
-      }
-      if (filtro?.lote_id) {
-        lista = lista.filter((m) => m.lote_id === filtro.lote_id);
-      }
-      if (filtro?.tipo) {
-        lista = lista.filter((m) => m.tipo === filtro.tipo);
-      }
-      if (filtro?.data_inicio) {
-        lista = lista.filter((m) => m.criado_em >= filtro.data_inicio!);
-      }
-      if (filtro?.data_fim) {
-        lista = lista.filter((m) => m.criado_em <= filtro.data_fim!);
-      }
-
-      // Enriquecimento com dados do Produto e Lote
-      const produtosCol = collection(db, COLLECTIONS.PRODUCTS);
-      const prodSnapshot = await getDocs(produtosCol);
-      const produtosMap = new Map(prodSnapshot.docs.map((d) => [d.id, d.data() as Produto]));
-
-      const lotesCol = collection(db, COLLECTIONS.LOTS);
-      const lotesSnapshot = await getDocs(lotesCol);
-      const lotesMap = new Map(lotesSnapshot.docs.map((d) => [d.id, d.data() as Lote]));
-
-      return lista.map((m) => {
-        const prod = produtosMap.get(m.produto_id);
-        const lote = m.lote_id ? lotesMap.get(m.lote_id) : null;
-        return {
-          ...m,
-          produto_nome: prod?.nome,
-          produto_codigo: prod?.codigo,
-          produto_unidade: prod?.unidade_medida,
-          lote_numero: lote?.numero_lote,
-          usuario_nome: 'Operador Almoxarifado',
-        };
-      });
+      return data as Movimentacao[];
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -161,51 +114,22 @@ export const stockRepository = {
 
   async listarConferenciasFisicas(filtro?: FiltroConferenciasDTO): Promise<ConferenciaFisica[]> {
     try {
-      const colRef = collection(db, COLLECTIONS.PHYSICAL_COUNTS);
-      let q = query(colRef, orderBy('criado_em', 'desc'));
+      const params = new URLSearchParams();
+      if (filtro?.produto_id) params.set('produto_id', filtro.produto_id);
+      if (filtro?.lote_id) params.set('lote_id', filtro.lote_id);
+      if (filtro?.data_inicio) params.set('data_inicio', filtro.data_inicio);
+      if (filtro?.data_fim) params.set('data_fim', filtro.data_fim);
+      if (filtro?.limite) params.set('limite', String(filtro.limite));
 
-      if (filtro?.limite) {
-        q = query(q, firestoreLimit(filtro.limite));
+      const url = `/api/estoque/conferencia${params.toString() ? `?${params.toString()}` : ''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao listar conferências físicas.');
       }
 
-      const snapshot = await getDocs(q);
-      let lista: ConferenciaFisica[] = snapshot.docs.map((d) => ({
-        ...(d.data() as ConferenciaFisica),
-        id: d.id,
-      }));
-
-      if (filtro?.produto_id) {
-        lista = lista.filter((c) => c.produto_id === filtro.produto_id);
-      }
-      if (filtro?.lote_id) {
-        lista = lista.filter((c) => c.lote_id === filtro.lote_id);
-      }
-      if (filtro?.data_inicio) {
-        lista = lista.filter((c) => c.criado_em >= filtro.data_inicio!);
-      }
-      if (filtro?.data_fim) {
-        lista = lista.filter((c) => c.criado_em <= filtro.data_fim!);
-      }
-
-      const produtosCol = collection(db, COLLECTIONS.PRODUCTS);
-      const prodSnapshot = await getDocs(produtosCol);
-      const produtosMap = new Map(prodSnapshot.docs.map((d) => [d.id, d.data() as Produto]));
-
-      const lotesCol = collection(db, COLLECTIONS.LOTS);
-      const lotesSnapshot = await getDocs(lotesCol);
-      const lotesMap = new Map(lotesSnapshot.docs.map((d) => [d.id, d.data() as Lote]));
-
-      return lista.map((c) => {
-        const prod = produtosMap.get(c.produto_id);
-        const lote = c.lote_id ? lotesMap.get(c.lote_id) : null;
-        return {
-          ...c,
-          produto_nome: prod?.nome,
-          produto_codigo: prod?.codigo,
-          lote_numero: lote?.numero_lote,
-          realizado_por_nome: 'Operador Almoxarifado',
-        };
-      });
+      return data as ConferenciaFisica[];
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }

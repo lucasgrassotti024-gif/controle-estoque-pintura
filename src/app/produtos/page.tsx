@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 
 export default function ProdutosPage() {
-  const { usuario } = useAuth();
-  const podeGerenciar = !!usuario && usuario.ativo && (usuario.papel === 'ADMIN' || usuario.papel === 'GESTOR');
+  const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
+  const podeGerenciar = !!usuario && usuario.ativo && (usuario.papel === 'ADMIN' || usuario.papel === 'OPERADOR');
   const podeMovimentar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
+
 
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -65,8 +66,10 @@ export default function ProdutosPage() {
   }
 
   useEffect(() => {
-    carregarProdutos();
-  }, []);
+    if (!carregandoAuth && autenticado) {
+      carregarProdutos();
+    }
+  }, [carregandoAuth, autenticado]);
 
   // Filtragem dinâmica em memória
   const produtosFiltrados = useMemo(() => {

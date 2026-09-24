@@ -58,5 +58,16 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if false;
     }
+
+    // Coleção: users (Perfis e Dados Cadastrais de Usuários)
+    // Escrita: estritamente proibida pelo Client SDK. Apenas Admin SDK no servidor gerencia usuários.
+    // Leitura: liberada apenas para usuários autenticados no Firebase Auth.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
   }
 }
+

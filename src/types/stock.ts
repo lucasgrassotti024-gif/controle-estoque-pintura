@@ -3,7 +3,39 @@
  * Projeto isolado e novo.
  */
 
-export type PapelUsuario = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
+export type PapelUsuario = 'ADMIN' | 'OPERADOR' | 'CONSULTA';
+
+export type PermissaoSistema = 
+  | 'ESTOQUE_VISUALIZAR'
+  | 'ESTOQUE_OPERAR'
+  | 'PRODUTO_GERENCIAR'
+  | 'USUARIO_GERENCIAR';
+
+export interface Usuario {
+  id: string;
+  uid: string;
+  email: string;
+  nome: string;
+  papel: PapelUsuario;
+  ativo: boolean;
+  criadoEm?: string;
+  atualizadoEm?: string;
+  criado_em?: string;
+  atualizado_em?: string;
+}
+
+export interface CriarUsuarioDTO {
+  email: string;
+  nome: string;
+  senha?: string;
+  papel: PapelUsuario;
+}
+
+export interface AtualizarUsuarioDTO {
+  nome?: string;
+  papel?: PapelUsuario;
+  ativo?: boolean;
+}
 
 export type CategoriaProduto = 
   | 'Tintas' 
@@ -65,18 +97,11 @@ export type SituacaoEstoque =
 
 // ==============================================================================
 // ENTIDADES DO BANCO DE DADOS
+// Modelos de Domínio do Banco de Dados
 // ==============================================================================
 
-export interface Usuario {
-  id: string;
-  email: string;
-  nome: string;
-  papel: PapelUsuario;
-  ativo: boolean;
-  criado_em: string;
-}
-
 export interface Produto {
+
   id: string;
   codigo: string;
   nome: string;

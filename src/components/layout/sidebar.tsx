@@ -8,9 +8,11 @@ import {
   Layers, 
   ArrowLeftRight, 
   ClipboardCheck, 
+  Users,
   X
 } from 'lucide-react';
 import { cn } from '@/lib/utils/formatters';
+import { useAuth } from '@/contexts/auth-context';
 
 interface SidebarProps {
   abertoNoMobile: boolean;
@@ -42,10 +44,20 @@ const ITENS_MENU = [
     icone: ClipboardCheck,
     descricao: 'Conferência física e ajustes',
   },
+  {
+    nome: 'Usuários',
+    href: '/usuarios',
+    icone: Users,
+    descricao: 'Controle de acesso e papéis',
+    apenasAdmin: true,
+  },
 ];
+
 
 export function Sidebar({ abertoNoMobile, onFecharMobile }: SidebarProps) {
   const pathname = usePathname();
+  const { usuario } = useAuth();
+  const isAdmin = usuario?.papel === 'ADMIN';
 
   return (
     <>
@@ -94,9 +106,10 @@ export function Sidebar({ abertoNoMobile, onFecharMobile }: SidebarProps) {
           <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-zinc-500 uppercase font-mono">
             Operacional
           </div>
-          {ITENS_MENU.map((item) => {
+          {ITENS_MENU.filter((item) => !item.apenasAdmin || isAdmin).map((item) => {
             const Icone = item.icone;
             const ativo = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+
 
             return (
               <Link

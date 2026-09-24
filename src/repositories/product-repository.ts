@@ -1,15 +1,3 @@
-import { db } from '@/lib/firebase/config';
-import { COLLECTIONS } from '@/lib/firebase/firestore';
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  query, 
-  where, 
-  orderBy, 
-  getCountFromServer 
-} from 'firebase/firestore';
 import { 
   Produto, 
   CriarProdutoDTO, 
@@ -25,36 +13,29 @@ import { formatarErroBanco } from '@/lib/utils/error-handler';
 export const productRepository = {
   async listar(filtro?: FiltroProdutosDTO): Promise<Produto[]> {
     try {
-      const colRef = collection(db, COLLECTIONS.PRODUCTS);
-      let q = query(colRef);
-
-      if (filtro?.apenas_ativos !== false) {
-        q = query(q, where('ativo', '==', true));
+      const params = new URLSearchParams();
+      if (filtro?.apenas_ativos !== undefined) {
+        params.set('apenas_ativos', String(filtro.apenas_ativos));
       }
-
       if (filtro?.categoria) {
-        q = query(q, where('categoria', '==', filtro.categoria));
+        params.set('categoria', filtro.categoria);
       }
-
-      q = query(q, orderBy('nome', 'asc'));
-
-      const snapshot = await getDocs(q);
-      let produtos: Produto[] = snapshot.docs.map((docSnap) => ({
-        ...(docSnap.data() as Produto),
-        id: docSnap.id,
-      }));
-
-      // Filtro de termo em memória (para suportar busca por código ou nome sem complexidade de índices textuais)
       if (filtro?.termo && filtro.termo.trim()) {
-        const termo = filtro.termo.trim().toLowerCase();
-        produtos = produtos.filter(
-          (p) =>
-            p.nome.toLowerCase().includes(termo) ||
-            p.codigo.toLowerCase().includes(termo)
-        );
+        params.set('termo', filtro.termo.trim());
+      }
+      if (filtro?.apenas_criticos) {
+        params.set('apenas_criticos', 'true');
       }
 
-      return produtos;
+      const url = `/api/produtos${params.toString() ? `?${params.toString()}` : ''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao listar produtos.');
+      }
+
+      return data as Produto[];
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -62,17 +43,15 @@ export const productRepository = {
 
   async buscarPorId(id: string): Promise<Produto | null> {
     try {
-      const docRef = doc(db, COLLECTIONS.PRODUCTS, id);
-      const docSnap = await getDoc(docRef);
-
-      if (!docSnap.exists()) {
+      const res = await fetch(`/api/produtos?id=${encodeURIComponent(id)}`);
+      if (res.status === 404) {
         return null;
       }
-
-      return {
-        ...(docSnap.data() as Produto),
-        id: docSnap.id,
-      };
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao buscar produto.');
+      }
+      return data as Produto;
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -80,19 +59,12 @@ export const productRepository = {
 
   async buscarPorCodigo(codigo: string): Promise<Produto | null> {
     try {
-      const colRef = collection(db, COLLECTIONS.PRODUCTS);
-      const q = query(colRef, where('codigo', '==', codigo.trim()));
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        return null;
+      const res = await fetch(`/api/produtos?codigo=${encodeURIComponent(codigo)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao buscar produto por código.');
       }
-
-      const docSnap = snapshot.docs[0];
-      return {
-        ...(docSnap.data() as Produto),
-        id: docSnap.id,
-      };
+      return data as Produto | null;
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -161,29 +133,12 @@ export const productRepository = {
     totalConferenciasLote: number;
   }> {
     try {
-      // 1. Contagem de lotes existentes
-      const lotesCol = collection(db, COLLECTIONS.LOTS);
-      const qLotes = query(lotesCol, where('produto_id', '==', produtoId));
-      const snapLotes = await getCountFromServer(qLotes);
-      const countLotes = snapLotes.data().count;
-
-      // 2. Contagem de movimentações que utilizaram lote
-      const movCol = collection(db, COLLECTIONS.MOVEMENTS);
-      const qMov = query(movCol, where('produto_id', '==', produtoId));
-      const snapMov = await getDocs(qMov);
-      const countMov = snapMov.docs.filter((d) => d.data().lote_id != null).length;
-
-      // 3. Contagem de conferências que utilizaram lote
-      const confCol = collection(db, COLLECTIONS.PHYSICAL_COUNTS);
-      const qConf = query(confCol, where('produto_id', '==', produtoId));
-      const snapConf = await getDocs(qConf);
-      const countConf = snapConf.docs.filter((d) => d.data().lote_id != null).length;
-
-      return {
-        totalLotes: countLotes || 0,
-        totalMovimentacoesLote: countMov || 0,
-        totalConferenciasLote: countConf || 0,
-      };
+      const res = await fetch(`/api/produtos?dependencias_lote=${encodeURIComponent(produtoId)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao verificar dependências de lote.');
+      }
+      return data;
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }

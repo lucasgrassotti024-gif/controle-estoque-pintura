@@ -1,43 +1,26 @@
-import { db } from '@/lib/firebase/config';
-import { COLLECTIONS } from '@/lib/firebase/firestore';
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  query, 
-  where, 
-  orderBy 
-} from 'firebase/firestore';
 import { Lote } from '@/types/stock';
 import { formatarErroBanco } from '@/lib/utils/error-handler';
 
 /**
- * Repositório para consulta de Lotes de materiais (Firestore).
- * Lotes são unicamente gerenciados (saldo) via transações atômicas de estoque.
+ * Repositório para consulta de Lotes de materiais.
+ * Migrado para Route Handler server-side (/api/lotes) via Firebase Admin SDK.
  */
 export const lotRepository = {
   async listarPorProduto(produtoId: string, apenasComSaldo: boolean = false): Promise<Lote[]> {
     try {
-      const colRef = collection(db, COLLECTIONS.LOTS);
-      let q = query(
-        colRef,
-        where('produto_id', '==', produtoId),
-        where('ativo', '==', true),
-        orderBy('criado_em', 'asc')
-      );
+      const params = new URLSearchParams({
+        produto_id: produtoId,
+        apenas_com_saldo: String(apenasComSaldo),
+      });
 
-      const snapshot = await getDocs(q);
-      let lotes: Lote[] = snapshot.docs.map((docSnap) => ({
-        ...(docSnap.data() as Lote),
-        id: docSnap.id,
-      }));
+      const res = await fetch(`/api/lotes?${params.toString()}`);
+      const data = await res.json();
 
-      if (apenasComSaldo) {
-        lotes = lotes.filter((l) => l.saldo_lote > 0);
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao listar lotes do produto.');
       }
 
-      return lotes;
+      return data as Lote[];
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -45,17 +28,17 @@ export const lotRepository = {
 
   async buscarPorId(loteId: string): Promise<Lote | null> {
     try {
-      const docRef = doc(db, COLLECTIONS.LOTS, loteId);
-      const docSnap = await getDoc(docRef);
-
-      if (!docSnap.exists()) {
+      const res = await fetch(`/api/lotes?id=${encodeURIComponent(loteId)}`);
+      if (res.status === 404) {
         return null;
       }
+      const data = await res.json();
 
-      return {
-        ...(docSnap.data() as Lote),
-        id: docSnap.id,
-      };
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao buscar lote.');
+      }
+
+      return data as Lote;
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }
@@ -63,23 +46,19 @@ export const lotRepository = {
 
   async buscarPorNumero(produtoId: string, numeroLote: string): Promise<Lote | null> {
     try {
-      const colRef = collection(db, COLLECTIONS.LOTS);
-      const q = query(
-        colRef,
-        where('produto_id', '==', produtoId),
-        where('numero_lote', '==', numeroLote.trim())
-      );
-      const snapshot = await getDocs(q);
+      const params = new URLSearchParams({
+        produto_id: produtoId,
+        numero_lote: numeroLote.trim(),
+      });
 
-      if (snapshot.empty) {
-        return null;
+      const res = await fetch(`/api/lotes?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao buscar lote por número.');
       }
 
-      const docSnap = snapshot.docs[0];
-      return {
-        ...(docSnap.data() as Lote),
-        id: docSnap.id,
-      };
+      return data as Lote | null;
     } catch (error: any) {
       throw new Error(formatarErroBanco(error).mensagem);
     }

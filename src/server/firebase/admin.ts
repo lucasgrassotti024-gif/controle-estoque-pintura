@@ -1,5 +1,6 @@
 import { getApps, initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Firestore, DocumentReference, Transaction } from 'firebase-admin/firestore';
+import { getAuth, Auth } from 'firebase-admin/auth';
 
 /**
  * ==============================================================================
@@ -40,4 +41,6 @@ if (getApps().length === 0) {
 }
 
 export const adminDb: Firestore = getFirestore();
+export const adminAuth: Auth = getAuth();
 export type { DocumentReference, Transaction };
+

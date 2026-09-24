@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 export default function ConferenciasPage() {
-  const { usuario } = useAuth();
+  const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
   const podeAuditar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
 
   const [conferencias, setConferencias] = useState<ConferenciaFisica[]>([]);
@@ -58,8 +58,10 @@ export default function ConferenciasPage() {
   }
 
   useEffect(() => {
-    carregarDados();
-  }, []);
+    if (!carregandoAuth && autenticado) {
+      carregarDados();
+    }
+  }, [carregandoAuth, autenticado]);
 
   // Filtro em memória
   const conferenciasFiltradas = useMemo(() => {

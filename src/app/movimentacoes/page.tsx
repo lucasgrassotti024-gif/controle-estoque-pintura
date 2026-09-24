@@ -5,6 +5,7 @@ import { stockService } from '@/services/stock-service';
 import { Movimentacao, TipoMovimentacao } from '@/types/stock';
 import { formatarQuantidade, formatarDataHora } from '@/lib/utils/formatters';
 import { DetalheMovimentacaoModal } from '@/components/modules/movimentacoes/detalhe-movimentacao-modal';
+import { useAuth } from '@/contexts/auth-context';
 import { 
   ArrowLeftRight, 
   RefreshCw, 
@@ -26,6 +27,7 @@ import {
 const ITENS_POR_PAGINA = 25;
 
 export default function MovimentacoesPage() {
+  const { autenticado, carregando: carregandoAuth } = useAuth();
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -64,8 +66,10 @@ export default function MovimentacoesPage() {
 
   // Recarrega quando filtros de servidor mudam
   useEffect(() => {
-    carregarMovimentacoes();
-  }, [tipoFiltro, dataInicio, dataFim]);
+    if (!carregandoAuth && autenticado) {
+      carregarMovimentacoes();
+    }
+  }, [tipoFiltro, dataInicio, dataFim, carregandoAuth, autenticado]);
 
   // Filtro textual operacional em memória (material, código, lote, doc_ref, motivo, usuário)
   const movimentacoesFiltradas = useMemo(() => {

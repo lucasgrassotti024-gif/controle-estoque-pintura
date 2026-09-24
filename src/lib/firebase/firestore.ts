@@ -6,6 +6,8 @@ export const COLLECTIONS = {
   LOTS: 'lots',
   MOVEMENTS: 'movements',
   PHYSICAL_COUNTS: 'physicalCounts',
+  USERS: 'users',
 } as const;
 
 export type CollectionName = typeof COLLECTIONS[keyof typeof COLLECTIONS];
+

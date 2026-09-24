@@ -1,16 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth, requirePermission } from '@/server/auth/session';
 import { stockServerService } from '@/server/services/stock-server-service';
 import { CriarProdutoDTO, AtualizarProdutoDTO } from '@/types/stock';
 
 /**
  * ==============================================================================
- * ROUTE HANDLER: CADASTRO E EDIÇÃO DE PRODUTOS (SERVER-SIDE)
+ * ROUTE HANDLER: CADASTRO, EDIÇÃO E CONSULTA DE PRODUTOS (SERVER-SIDE)
  * ==============================================================================
- * POST: Cria produto garantindo saldo_atual = 0 e código único.
- * PATCH: Edita produto protegendo saldo_atual contra mutações diretas.
+ * GET: requireAuth (visualização de produtos para todos os papéis)
+ * POST / PATCH: requirePermission('PRODUTO_GERENCIAR') (OPERADOR e ADMIN)
  */
 
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    const codigo = searchParams.get('codigo');
+    const dependenciasLote = searchParams.get('dependencias_lote');
+
+    if (dependenciasLote) {
+      const dependencias = await stockServerService.verificarDependenciasLote(dependenciasLote);
+      return NextResponse.json(dependencias, { status: 200 });
+    }
+
+    if (id) {
+      const produto = await stockServerService.buscarProdutoPorId(id);
+      if (!produto) {
+        return NextResponse.json({ erro: 'Produto não encontrado.' }, { status: 404 });
+      }
+      return NextResponse.json(produto, { status: 200 });
+    }
+
+    if (codigo) {
+      const produto = await stockServerService.buscarProdutoPorCodigo(codigo);
+      return NextResponse.json(produto, { status: 200 });
+    }
+
+    const termo = searchParams.get('termo') || undefined;
+    const categoria = searchParams.get('categoria') as any || undefined;
+    const apenas_ativos = searchParams.has('apenas_ativos')
+      ? searchParams.get('apenas_ativos') === 'true'
+      : undefined;
+    const apenas_criticos = searchParams.get('apenas_criticos') === 'true';
+
+    const produtos = await stockServerService.listarProdutos({
+      termo,
+      categoria,
+      apenas_ativos,
+      apenas_criticos,
+    });
+
+    return NextResponse.json(produtos, { status: 200 });
+  } catch (error: any) {
+    return NextResponse.json(
+      { erro: error?.message || 'Erro ao consultar produtos.' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(req: NextRequest) {
+  const auth = await requirePermission(req, 'PRODUTO_GERENCIAR');
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = await req.json();
 
@@ -38,6 +97,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requirePermission(req, 'PRODUTO_GERENCIAR');
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = await req.json();
     const id = String(body.id || '');
@@ -75,3 +139,4 @@ export async function PATCH(req: NextRequest) {
     );
   }
 }
+

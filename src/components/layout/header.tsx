@@ -44,11 +44,18 @@ export function Header({ onAbrirMobile }: HeaderProps) {
                 <span className="text-xs font-medium text-zinc-200 leading-tight">
                   {usuario?.nome || email}
                 </span>
-                <span className="text-[10px] text-amber-400/90 font-mono uppercase tracking-wider">
-                  {usuario?.papel || 'OPERADOR'}
+                <span className={`text-[10px] font-mono uppercase tracking-wider font-semibold ${
+                  usuario?.papel === 'ADMIN'
+                    ? 'text-purple-400'
+                    : usuario?.papel === 'OPERADOR'
+                    ? 'text-amber-400'
+                    : 'text-blue-400'
+                }`}>
+                  {usuario?.papel || 'CONSULTA'}
                 </span>
               </div>
             </div>
+
 
             <button
               onClick={logout}
