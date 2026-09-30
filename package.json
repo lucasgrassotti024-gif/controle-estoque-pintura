@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "test": "node -e \"const fs = require('fs'); const { execSync } = require('child_process'); const files = fs.readdirSync('src/tests').filter(f => f.endsWith('.test.ts')); files.forEach(f => { console.log('=== Executando ' + f + ' ==='); execSync('npx tsx src/tests/' + f, { stdio: 'inherit' }); });\""
