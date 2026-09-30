@@ -54,13 +54,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: 'same-origin',
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.autenticado && data.usuario) {
-          setUsuario(data.usuario);
-          return;
-        }
+      if (!res.ok) {
+        setUsuario(null);
+        return;
       }
+
+      const text = await res.text();
+      if (!text || text.trim().length === 0) {
+        setUsuario(null);
+        return;
+      }
+
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        setUsuario(null);
+        return;
+      }
+
+      if (data && data.autenticado && data.usuario) {
+        setUsuario(data.usuario);
+        return;
+      }
+
       setUsuario(null);
     } catch {
       setUsuario(null);
@@ -90,15 +107,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ idToken }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = null;
+      if (text && text.trim().length > 0) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = null;
+        }
+      }
 
       if (!res.ok) {
         // Se a validação server-side falhou (ex: usuário desativado ou não encontrado), desconectar client
         await firebaseSignOut(auth);
         setUsuario(null);
+        const mensagemServidor =
+          data?.erro ||
+          (res.status >= 500
+            ? 'Serviço temporariamente indisponível no servidor. Tente novamente mais tarde.'
+            : 'Falha ao autenticar sessão no servidor.');
         return {
           sucesso: false,
-          erro: data?.erro || 'Falha ao autenticar sessão no servidor.',
+          erro: mensagemServidor,
+        };
+      }
+
+      if (!data || !data.usuario) {
+        await firebaseSignOut(auth);
+        setUsuario(null);
+        return {
+          sucesso: false,
+          erro: 'Resposta inesperada do servidor ao criar sessão.',
         };
       }
 
