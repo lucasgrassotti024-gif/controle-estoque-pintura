@@ -163,6 +163,21 @@ MIIEvAIBADANBgk...
     '10. Login com HTTP 500 sem JSON exibe mensagem amigável e segura para o usuário'
   );
 
+  // --- 9. Validação de resolução CommonJS de firebase-admin/auth e jwks-rsa ---
+  let authCarregou = false;
+  try {
+    const authModule = require('firebase-admin/auth');
+    const jwksUtils = require('jwks-rsa/src/utils');
+    authCarregou = Boolean(authModule && jwksUtils && typeof jwksUtils.retrieveSigningKeys === 'function');
+  } catch {
+    authCarregou = false;
+  }
+
+  asserir(
+    authCarregou,
+    '11. firebase-admin/auth e jwks-rsa/src/utils carregam sem lançar ERR_REQUIRE_ESM'
+  );
+
   console.log('\n======================================================================');
   console.log(`TOTAL DE TESTES DE SANITIZAÇÃO E RESILIÊNCIA: ${sucessos + falhas}`);
   console.log(`PASSOU: ${sucessos} | FALHAS: ${falhas}`);
