@@ -7,7 +7,9 @@ export const COLLECTIONS = {
   MOVEMENTS: 'movements',
   PHYSICAL_COUNTS: 'physicalCounts',
   USERS: 'users',
+  IDEMPOTENCY_RECORDS: 'idempotency_records',
 } as const;
 
 export type CollectionName = typeof COLLECTIONS[keyof typeof COLLECTIONS];
+
 

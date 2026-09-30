@@ -115,6 +115,7 @@ export interface Produto {
   estoque_maximo: number;
   saldo_atual: number;
   ativo: boolean;
+  version?: number;
   criado_em: string;
   atualizado_em: string;
 }
@@ -127,6 +128,7 @@ export interface Lote {
   data_validade?: string | null;
   saldo_lote: number;
   ativo: boolean;
+  version?: number;
   criado_em: string;
 }
 
@@ -143,6 +145,9 @@ export interface Movimentacao {
   justificativa?: string | null;
   observacao?: string | null;
   usuario_id: string;
+  idempotency_key?: string | null;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
   criado_em: string;
   // Campos enriquecidos para exibição em listas
   produto_nome?: string;
@@ -214,6 +219,9 @@ export interface RegistrarEntradaDTO {
   observacao?: string | null;
   numero_lote?: string | null;
   data_validade?: string | null;
+  idempotency_key?: string | null;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
 }
 
 export interface RegistrarSaidaDTO {
@@ -223,6 +231,11 @@ export interface RegistrarSaidaDTO {
   motivo_destino?: string | null;
   observacao?: string | null;
   lote_id?: string | null;
+  idempotency_key?: string | null;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
+  snapshot_version_produto?: number | null;
+  snapshot_version_lote?: number | null;
 }
 
 export interface RegistrarConferenciaDTO {
@@ -231,7 +244,31 @@ export interface RegistrarConferenciaDTO {
   justificativa?: string | null;
   observacao?: string | null;
   lote_id?: string | null;
+  idempotency_key?: string | null;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
+  snapshot_version_produto?: number | null;
+  snapshot_version_lote?: number | null;
 }
+
+// ==============================================================================
+// REGISTRO DE IDEMPOTÊNCIA (FIRESTORE)
+// ==============================================================================
+
+export interface IdempotencyRecordDocument {
+  idempotency_key: string;
+  status: 'COMPLETED';
+  usuario_uid: string;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
+  payload_hash: string;
+  endpoint: string;
+  response_status: number;
+  response_body: ResultadoOperacaoEstoque;
+  criado_em: any;
+  expira_em: any;
+}
+
 
 // ==============================================================================
 // RESULTADOS E FILTROS DE CONSULTA
@@ -246,6 +283,9 @@ export interface ResultadoOperacaoEstoque {
   saldo_posterior?: number;
   diferenca?: number;
   lote_id?: string | null;
+  replayed?: boolean;
+  version_produto?: number;
+  version_lote?: number;
 }
 
 export interface ConsultaEstoqueProduto {

@@ -14,8 +14,14 @@ import {
   Usuario,
   CriarUsuarioDTO,
   AtualizarUsuarioDTO,
-  PapelUsuario
+  PapelUsuario,
+  IdempotencyRecordDocument
 } from '@/types/stock';
+import { 
+  calcularPayloadHash, 
+  calcularDataExpiracaoTTL 
+} from '@/server/auth/idempotency';
+
 
 
 /**
@@ -61,7 +67,48 @@ export const stockServerService = {
     const operadorUid = usuarioAutenticado?.uid || USUARIO_TECNICO_DEV;
     const operadorNome = usuarioAutenticado?.nome || 'Operador Almoxarifado';
 
+    const idempotencyKey = dto.idempotency_key?.trim() || null;
+    const payloadHash = idempotencyKey ? calcularPayloadHash(dto) : null;
+    const ttlExpiracao = idempotencyKey ? calcularDataExpiracaoTTL() : null;
+
     return await adminDb.runTransaction(async (transaction: Transaction) => {
+      // 0. Barreira de Idempotência Atômica
+      let idmpRef: DocumentReference | null = null;
+      if (idempotencyKey) {
+        idmpRef = adminDb.collection(COLLECTIONS.IDEMPOTENCY_RECORDS).doc(idempotencyKey);
+        const idmpSnap = await transaction.get(idmpRef);
+
+        if (idmpSnap.exists) {
+          const idmpData = idmpSnap.data() as IdempotencyRecordDocument;
+
+          // Validação de Propriedade da Chave (Anti-Hijacking)
+          if (idmpData.usuario_uid !== operadorUid) {
+            const erro: any = new Error(
+              `Violação de Segurança: A chave de idempotência '${idempotencyKey}' pertence a outro operador.`
+            );
+            erro.statusCode = 403;
+            erro.codigo = 'IDEMPOTENCY_KEY_HIJACKING';
+            throw erro;
+          }
+
+          // Validação de Integridade do Payload (Anti-Tampering)
+          if (idmpData.payload_hash !== payloadHash) {
+            const erro: any = new Error(
+              `Violação de Integridade: A chave de idempotência '${idempotencyKey}' já foi utilizada para uma operação com payload diferente.`
+            );
+            erro.statusCode = 422;
+            erro.codigo = 'IDEMPOTENCY_PAYLOAD_TAMPERING';
+            throw erro;
+          }
+
+          // Replay Idempotente Seguro
+          return {
+            ...idmpData.response_body,
+            replayed: true,
+          };
+        }
+      }
+
       // 1. Ler Produto
       const prodRef = adminDb.collection(COLLECTIONS.PRODUCTS).doc(dto.produto_id);
       const prodSnap = await transaction.get(prodRef);
@@ -76,10 +123,15 @@ export const stockServerService = {
       }
 
       const saldoAnt = produto.saldo_atual || 0;
+      // Compatibilidade legada para version
+      const versaoAtualProd = typeof produto.version === 'number' ? produto.version : 1;
+      const novaVersaoProd = versaoAtualProd + 1;
+
       let loteId: string | null = null;
       let loteRef: DocumentReference | null = null;
       let saldoLoteAnt = 0;
       let loteExiste = false;
+      let novaVersaoLote: number | undefined = undefined;
 
       // 2. Validação e Busca de Lote
       if (produto.controla_lote) {
@@ -101,11 +153,14 @@ export const stockServerService = {
           const loteSnap = await transaction.get(loteRef);
           const loteData = loteSnap.data() as Lote;
           saldoLoteAnt = loteData.saldo_lote || 0;
+          const versaoAtualLote = typeof loteData.version === 'number' ? loteData.version : 1;
+          novaVersaoLote = versaoAtualLote + 1;
           loteExiste = true;
         } else {
           loteRef = adminDb.collection(COLLECTIONS.LOTS).doc();
           loteId = loteRef.id;
           loteExiste = false;
+          novaVersaoLote = 1;
         }
       } else {
         if (dto.numero_lote && dto.numero_lote.trim() !== '') {
@@ -117,12 +172,13 @@ export const stockServerService = {
       const saldoPos = saldoAnt + dto.quantidade;
       const now = new Date().toISOString();
 
-      // 4. Gravação de Lote (se aplicável)
+      // 4. Gravação de Lote (se aplicável) com versionamento
       if (produto.controla_lote && loteRef) {
         if (loteExiste) {
           transaction.update(loteRef, {
             saldo_lote: saldoLoteAnt + dto.quantidade,
             data_validade: dto.data_validade || null,
+            version: novaVersaoLote,
             atualizado_em: now,
           });
         } else {
@@ -132,19 +188,21 @@ export const stockServerService = {
             data_validade: dto.data_validade || null,
             saldo_lote: dto.quantidade,
             ativo: true,
+            version: novaVersaoLote,
             criado_em: now,
             atualizado_em: now,
           });
         }
       }
 
-      // 5. Atualização atômica do saldo do produto
+      // 5. Atualização atômica do saldo do produto com incremento de versão
       transaction.update(prodRef, {
         saldo_atual: saldoPos,
+        version: novaVersaoProd,
         atualizado_em: now,
       });
 
-      // 6. Registro no Ledger Imutável com usuário real da sessão
+      // 6. Registro no Ledger Imutável com auditoria completa
       const movRef = adminDb.collection(COLLECTIONS.MOVEMENTS).doc();
       transaction.set(movRef, {
         produto_id: dto.produto_id,
@@ -158,16 +216,41 @@ export const stockServerService = {
         observacao: dto.observacao?.trim() || null,
         usuario_id: operadorUid,
         usuario_nome: operadorNome,
+        idempotency_key: idempotencyKey,
+        device_id: dto.device_id || null,
+        local_sequence_number: dto.local_sequence_number || null,
         criado_em: now,
       });
 
-      return {
+      const resultado: ResultadoOperacaoEstoque = {
         sucesso: true,
         movimentacao_id: movRef.id,
         saldo_anterior: saldoAnt,
         saldo_posterior: saldoPos,
         lote_id: loteId || undefined,
+        version_produto: novaVersaoProd,
+        version_lote: novaVersaoLote,
       };
+
+      // 7. Gravação atômica do registro de idempotência COMPLETED
+      if (idmpRef && idempotencyKey && payloadHash && ttlExpiracao) {
+        const idmpRecord: IdempotencyRecordDocument = {
+          idempotency_key: idempotencyKey,
+          status: 'COMPLETED',
+          usuario_uid: operadorUid,
+          device_id: dto.device_id || null,
+          local_sequence_number: dto.local_sequence_number || null,
+          payload_hash: payloadHash,
+          endpoint: '/api/estoque/entrada',
+          response_status: 200,
+          response_body: resultado,
+          criado_em: now,
+          expira_em: ttlExpiracao,
+        };
+        transaction.set(idmpRef, idmpRecord);
+      }
+
+      return resultado;
     });
   },
 
@@ -189,8 +272,48 @@ export const stockServerService = {
     const operadorUid = usuarioAutenticado?.uid || USUARIO_TECNICO_DEV;
     const operadorNome = usuarioAutenticado?.nome || 'Operador Almoxarifado';
 
+    const idempotencyKey = dto.idempotency_key?.trim() || null;
+    const payloadHash = idempotencyKey ? calcularPayloadHash(dto) : null;
+    const ttlExpiracao = idempotencyKey ? calcularDataExpiracaoTTL() : null;
 
     return await adminDb.runTransaction(async (transaction: Transaction) => {
+      // 0. Barreira de Idempotência Atômica
+      let idmpRef: DocumentReference | null = null;
+      if (idempotencyKey) {
+        idmpRef = adminDb.collection(COLLECTIONS.IDEMPOTENCY_RECORDS).doc(idempotencyKey);
+        const idmpSnap = await transaction.get(idmpRef);
+
+        if (idmpSnap.exists) {
+          const idmpData = idmpSnap.data() as IdempotencyRecordDocument;
+
+          // Validação de Propriedade da Chave (Anti-Hijacking)
+          if (idmpData.usuario_uid !== operadorUid) {
+            const erro: any = new Error(
+              `Violação de Segurança: A chave de idempotência '${idempotencyKey}' pertence a outro operador.`
+            );
+            erro.statusCode = 403;
+            erro.codigo = 'IDEMPOTENCY_KEY_HIJACKING';
+            throw erro;
+          }
+
+          // Validação de Integridade do Payload (Anti-Tampering)
+          if (idmpData.payload_hash !== payloadHash) {
+            const erro: any = new Error(
+              `Violação de Integridade: A chave de idempotência '${idempotencyKey}' já foi utilizada para uma operação com payload diferente.`
+            );
+            erro.statusCode = 422;
+            erro.codigo = 'IDEMPOTENCY_PAYLOAD_TAMPERING';
+            throw erro;
+          }
+
+          // Replay Idempotente Seguro
+          return {
+            ...idmpData.response_body,
+            replayed: true,
+          };
+        }
+      }
+
       // 1. Ler Produto
       const prodRef = adminDb.collection(COLLECTIONS.PRODUCTS).doc(dto.produto_id);
       const prodSnap = await transaction.get(prodRef);
@@ -205,6 +328,8 @@ export const stockServerService = {
       }
 
       const saldoAnt = produto.saldo_atual || 0;
+      const versaoAtualProd = typeof produto.version === 'number' ? produto.version : 1;
+      const novaVersaoProd = versaoAtualProd + 1;
 
       // 2. Proteção geral contra saldo negativo
       if (saldoAnt < dto.quantidade) {
@@ -215,6 +340,7 @@ export const stockServerService = {
 
       let loteRef: DocumentReference | null = null;
       let saldoLoteAnt = 0;
+      let novaVersaoLote: number | undefined = undefined;
 
       // 3. Validação de Lote
       if (produto.controla_lote) {
@@ -244,6 +370,9 @@ export const stockServerService = {
             `Saldo insuficiente no lote selecionado. Disponível no lote: ${saldoLoteAnt}, Saída solicitada: ${dto.quantidade}`
           );
         }
+
+        const versaoAtualLote = typeof lote.version === 'number' ? lote.version : 1;
+        novaVersaoLote = versaoAtualLote + 1;
       } else {
         if (dto.lote_id) {
           throw new Error('Este produto não controla lote. Parâmetro de lote deve ser nulo.');
@@ -254,21 +383,23 @@ export const stockServerService = {
       const saldoPos = saldoAnt - dto.quantidade;
       const now = new Date().toISOString();
 
-      // 5. Debitar Lote
+      // 5. Debitar Lote com incremento de versão
       if (produto.controla_lote && loteRef) {
         transaction.update(loteRef, {
           saldo_lote: saldoLoteAnt - dto.quantidade,
+          version: novaVersaoLote,
           atualizado_em: now,
         });
       }
 
-      // 6. Atualizar Saldo do Produto
+      // 6. Atualizar Saldo do Produto com incremento de versão
       transaction.update(prodRef, {
         saldo_atual: saldoPos,
+        version: novaVersaoProd,
         atualizado_em: now,
       });
 
-      // 7. Registro no Ledger Imutável
+      // 7. Registro no Ledger Imutável com auditoria
       const movRef = adminDb.collection(COLLECTIONS.MOVEMENTS).doc();
       transaction.set(movRef, {
         produto_id: dto.produto_id,
@@ -282,17 +413,41 @@ export const stockServerService = {
         observacao: dto.observacao?.trim() || null,
         usuario_id: operadorUid,
         usuario_nome: operadorNome,
+        idempotency_key: idempotencyKey,
+        device_id: dto.device_id || null,
+        local_sequence_number: dto.local_sequence_number || null,
         criado_em: now,
       });
 
-
-      return {
+      const resultado: ResultadoOperacaoEstoque = {
         sucesso: true,
         movimentacao_id: movRef.id,
         saldo_anterior: saldoAnt,
         saldo_posterior: saldoPos,
         lote_id: dto.lote_id || undefined,
+        version_produto: novaVersaoProd,
+        version_lote: novaVersaoLote,
       };
+
+      // 8. Gravação atômica do registro de idempotência COMPLETED
+      if (idmpRef && idempotencyKey && payloadHash && ttlExpiracao) {
+        const idmpRecord: IdempotencyRecordDocument = {
+          idempotency_key: idempotencyKey,
+          status: 'COMPLETED',
+          usuario_uid: operadorUid,
+          device_id: dto.device_id || null,
+          local_sequence_number: dto.local_sequence_number || null,
+          payload_hash: payloadHash,
+          endpoint: '/api/estoque/saida',
+          response_status: 200,
+          response_body: resultado,
+          criado_em: now,
+          expira_em: ttlExpiracao,
+        };
+        transaction.set(idmpRef, idmpRecord);
+      }
+
+      return resultado;
     });
   },
 
@@ -314,7 +469,45 @@ export const stockServerService = {
     const operadorUid = usuarioAutenticado?.uid || USUARIO_TECNICO_DEV;
     const operadorNome = usuarioAutenticado?.nome || 'Operador Almoxarifado';
 
+    const idempotencyKey = dto.idempotency_key?.trim() || null;
+    const payloadHash = idempotencyKey ? calcularPayloadHash(dto) : null;
+    const ttlExpiracao = idempotencyKey ? calcularDataExpiracaoTTL() : null;
+
     return await adminDb.runTransaction(async (transaction: Transaction) => {
+      // 0. Barreira de Idempotência Atômica
+      let idmpRef: DocumentReference | null = null;
+      if (idempotencyKey) {
+        idmpRef = adminDb.collection(COLLECTIONS.IDEMPOTENCY_RECORDS).doc(idempotencyKey);
+        const idmpSnap = await transaction.get(idmpRef);
+
+        if (idmpSnap.exists) {
+          const idmpData = idmpSnap.data() as IdempotencyRecordDocument;
+
+          if (idmpData.usuario_uid !== operadorUid) {
+            const erro: any = new Error(
+              `Violação de Segurança: A chave de idempotência '${idempotencyKey}' pertence a outro operador.`
+            );
+            erro.statusCode = 403;
+            erro.codigo = 'IDEMPOTENCY_KEY_HIJACKING';
+            throw erro;
+          }
+
+          if (idmpData.payload_hash !== payloadHash) {
+            const erro: any = new Error(
+              `Violação de Integridade: A chave de idempotência '${idempotencyKey}' já foi utilizada para uma operação com payload diferente.`
+            );
+            erro.statusCode = 422;
+            erro.codigo = 'IDEMPOTENCY_PAYLOAD_TAMPERING';
+            throw erro;
+          }
+
+          return {
+            ...idmpData.response_body,
+            replayed: true,
+          };
+        }
+      }
+
       // 1. Ler Produto
       const prodRef = adminDb.collection(COLLECTIONS.PRODUCTS).doc(dto.produto_id);
       const prodSnap = await transaction.get(prodRef);
@@ -328,11 +521,32 @@ export const stockServerService = {
         throw new Error('Produto não encontrado ou inativo.');
       }
 
+      const versaoAtualProd = typeof produto.version === 'number' ? produto.version : 1;
+      const novaVersaoProd = versaoAtualProd + 1;
+
+      // Validação de Snapshot Obsoleto (Auditoria Rígida de Conferência Offline)
+      if (typeof dto.snapshot_version_produto === 'number' && dto.snapshot_version_produto < versaoAtualProd) {
+        const erroConflito: any = new Error(
+          `Conflito de Auditoria: A conferência física foi realizada sobre um snapshot desatualizado (Versão do dispositivo: ${dto.snapshot_version_produto}, Versão atual do servidor: ${versaoAtualProd}). A evidência foi preservada e requer revisão.`
+        );
+        erroConflito.statusCode = 409;
+        erroConflito.codigo = 'STALE_AUDIT_SNAPSHOT';
+        erroConflito.detalhes = {
+          produto_id: dto.produto_id,
+          lote_id: dto.lote_id || null,
+          versao_esperada: dto.snapshot_version_produto,
+          versao_atual: versaoAtualProd,
+          saldo_atual: produto.saldo_atual || 0,
+        };
+        throw erroConflito;
+      }
+
       const saldoAntProd = produto.saldo_atual || 0;
       let saldoPosProd: number;
       let diferenca: number;
       let loteRef: DocumentReference | null = null;
       let saldoAntLote = 0;
+      let novaVersaoLote: number | undefined = undefined;
 
       // 2. Validação e cálculo por modalidade
       if (produto.controla_lote) {
@@ -356,6 +570,24 @@ export const stockServerService = {
           throw new Error('Inconsistência: o lote informado não pertence a este produto.');
         }
 
+        const versaoAtualLote = typeof lote.version === 'number' ? lote.version : 1;
+        if (typeof dto.snapshot_version_lote === 'number' && dto.snapshot_version_lote < versaoAtualLote) {
+          const erroConflito: any = new Error(
+            `Conflito de Auditoria: A conferência do lote foi realizada sobre um snapshot desatualizado (Versão do lote no dispositivo: ${dto.snapshot_version_lote}, Versão atual do lote no servidor: ${versaoAtualLote}). A evidência foi preservada.`
+          );
+          erroConflito.statusCode = 409;
+          erroConflito.codigo = 'STALE_AUDIT_SNAPSHOT';
+          erroConflito.detalhes = {
+            produto_id: dto.produto_id,
+            lote_id: dto.lote_id,
+            versao_esperada: dto.snapshot_version_lote,
+            versao_atual: versaoAtualLote,
+            saldo_atual: lote.saldo_lote || 0,
+          };
+          throw erroConflito;
+        }
+
+        novaVersaoLote = versaoAtualLote + 1;
         saldoAntLote = lote.saldo_lote || 0;
         diferenca = dto.quantidade_encontrada - saldoAntLote;
         saldoPosProd = saldoAntProd + diferenca;
@@ -376,21 +608,23 @@ export const stockServerService = {
 
       const now = new Date().toISOString();
 
-      // 3. Atualizar Lote (se aplicável)
+      // 3. Atualizar Lote (se aplicável) com versão
       if (produto.controla_lote && loteRef) {
         transaction.update(loteRef, {
           saldo_lote: dto.quantidade_encontrada,
+          version: novaVersaoLote,
           atualizado_em: now,
         });
       }
 
-      // 4. Atualizar Saldo do Produto
+      // 4. Atualizar Saldo do Produto com versão
       transaction.update(prodRef, {
         saldo_atual: saldoPosProd,
+        version: novaVersaoProd,
         atualizado_em: now,
       });
 
-      // 5. Registrar na coleção de Conferências Físicas com usuário real da sessão
+      // 5. Registrar na coleção de Conferências Físicas com auditoria completa
       const confRef = adminDb.collection(COLLECTIONS.PHYSICAL_COUNTS).doc();
       transaction.set(confRef, {
         produto_id: dto.produto_id,
@@ -402,6 +636,9 @@ export const stockServerService = {
         observacao: dto.observacao?.trim() || null,
         realizado_por: operadorUid,
         realizado_por_nome: operadorNome,
+        idempotency_key: idempotencyKey,
+        device_id: dto.device_id || null,
+        local_sequence_number: dto.local_sequence_number || null,
         criado_em: now,
       });
 
@@ -430,20 +667,44 @@ export const stockServerService = {
           observacao: dto.observacao?.trim() || null,
           usuario_id: operadorUid,
           usuario_nome: operadorNome,
+          idempotency_key: idempotencyKey,
+          device_id: dto.device_id || null,
+          local_sequence_number: dto.local_sequence_number || null,
           criado_em: now,
         });
       }
 
-      return {
+      const resultado: ResultadoOperacaoEstoque = {
         sucesso: true,
         conferencia_id: confRef.id,
-
         movimentacao_id: movId || undefined,
         saldo_anterior: saldoAntProd,
         saldo_posterior: saldoPosProd,
         diferenca: diferenca,
         lote_id: dto.lote_id || undefined,
+        version_produto: novaVersaoProd,
+        version_lote: novaVersaoLote,
       };
+
+      // 7. Gravação atômica do registro de idempotência COMPLETED
+      if (idmpRef && idempotencyKey && payloadHash && ttlExpiracao) {
+        const idmpRecord: IdempotencyRecordDocument = {
+          idempotency_key: idempotencyKey,
+          status: 'COMPLETED',
+          usuario_uid: operadorUid,
+          device_id: dto.device_id || null,
+          local_sequence_number: dto.local_sequence_number || null,
+          payload_hash: payloadHash,
+          endpoint: '/api/estoque/conferencia',
+          response_status: 200,
+          response_body: resultado,
+          criado_em: now,
+          expira_em: ttlExpiracao,
+        };
+        transaction.set(idmpRef, idmpRecord);
+      }
+
+      return resultado;
     });
   },
 

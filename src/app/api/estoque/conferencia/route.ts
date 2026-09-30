@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
+import { extrairIdempotencyKey } from '@/server/auth/idempotency';
+
 export async function POST(req: NextRequest) {
   const auth = await requirePermission(req, 'ESTOQUE_OPERAR');
   if ('errorResponse' in auth) {
@@ -49,6 +51,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const idempotencyKey = extrairIdempotencyKey(req, body);
 
     const dto: RegistrarConferenciaDTO = {
       produto_id: String(body.produto_id || ''),
@@ -56,6 +59,11 @@ export async function POST(req: NextRequest) {
       justificativa: body.justificativa ? String(body.justificativa) : undefined,
       observacao: body.observacao ? String(body.observacao) : undefined,
       lote_id: body.lote_id ? String(body.lote_id) : undefined,
+      idempotency_key: idempotencyKey,
+      device_id: body.device_id ? String(body.device_id) : undefined,
+      local_sequence_number: typeof body.local_sequence_number === 'number' ? body.local_sequence_number : undefined,
+      snapshot_version_produto: typeof body.snapshot_version_produto === 'number' ? body.snapshot_version_produto : undefined,
+      snapshot_version_lote: typeof body.snapshot_version_lote === 'number' ? body.snapshot_version_lote : undefined,
     };
 
     const resultado = await stockServerService.registrarConferenciaFisica(dto, {
@@ -65,10 +73,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(resultado, { status: 200 });
 
   } catch (error: any) {
+    const status = error?.statusCode || 400;
     return NextResponse.json(
-      { erro: error?.message || 'Erro ao registrar conferência física.' },
-      { status: 400 }
+      { 
+        erro: error?.message || 'Erro ao registrar conferência física.',
+        codigo: error?.codigo,
+        detalhes: error?.detalhes
+      },
+      { status }
     );
   }
 }
+
 
