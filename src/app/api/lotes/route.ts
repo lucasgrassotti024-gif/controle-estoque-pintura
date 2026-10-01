@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth } from '@/server/auth/session';
+import { requireAuth, requirePermission } from '@/server/auth/session';
 import { stockServerService } from '@/server/services/stock-server-service';
 
 /**
@@ -48,6 +48,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       { erro: error?.message || 'Erro ao consultar lotes.' },
       { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const auth = await requirePermission(req, 'ESTOQUE_AJUSTAR');
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ erro: 'ID do lote é obrigatório.' }, { status: 400 });
+    }
+
+    const resultado = await stockServerService.excluirLote(id, {
+      uid: auth.usuario.uid,
+      nome: auth.usuario.nome || 'Administrador',
+    });
+
+    return NextResponse.json(resultado, { status: 200 });
+  } catch (error: any) {
+    const status = error?.statusCode || 400;
+    return NextResponse.json(
+      { erro: error?.message || 'Erro ao processar exclusão/desativação do lote.' },
+      { status }
     );
   }
 }

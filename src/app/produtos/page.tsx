@@ -19,14 +19,15 @@ import {
   CheckCircle2, 
   ArrowDownLeft,
   ArrowUpRight,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 
 export default function ProdutosPage() {
   const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
   const podeGerenciar = !!usuario && usuario.ativo && (usuario.papel === 'ADMIN' || usuario.papel === 'OPERADOR');
   const podeMovimentar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
-
+  const isAdmin = !!usuario && usuario.ativo && usuario.papel === 'ADMIN';
 
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -46,9 +47,11 @@ export default function ProdutosPage() {
   const [modalSaidaAberto, setModalSaidaAberto] = useState(false);
   const [produtoParaSaida, setProdutoParaSaida] = useState<Produto | null>(null);
   const [alternandoStatusId, setAlternandoStatusId] = useState<string | null>(null);
+  const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
-  // Modal Interno de Confirmação de Desativação/Ativação
+  // Modal Interno de Confirmação de Desativação/Ativação e Exclusão
   const [produtoParaAlternarStatus, setProdutoParaAlternarStatus] = useState<Produto | null>(null);
+  const [produtoParaExcluir, setProdutoParaExcluir] = useState<Produto | null>(null);
 
   async function carregarProdutos() {
     setCarregando(true);
@@ -112,6 +115,25 @@ export default function ProdutosPage() {
       setErro(err.message || 'Erro ao alterar status do produto.');
     } finally {
       setAlternandoStatusId(null);
+    }
+  }
+
+  async function handleConfirmarExclusao() {
+    if (!produtoParaExcluir) return;
+    const produto = produtoParaExcluir;
+
+    setExcluindoId(produto.id);
+    setErro(null);
+    try {
+      const res = await productService.excluir(produto.id);
+      setProdutos((prev) => prev.filter((p) => p.id !== produto.id));
+      setMensagemSucesso(res.mensagem || `Material "${produto.nome}" excluído com sucesso.`);
+      setTimeout(() => setMensagemSucesso(null), 4000);
+      setProdutoParaExcluir(null);
+    } catch (err: any) {
+      setErro(err.message || 'Erro ao excluir material.');
+    } finally {
+      setExcluindoId(null);
     }
   }
 
@@ -415,6 +437,17 @@ export default function ProdutosPage() {
                         >
                           <Power className={`w-4 h-4 ${alternandoStatusId === p.id ? 'animate-spin' : ''}`} />
                         </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => setProdutoParaExcluir(p)}
+                            disabled={excluindoId === p.id}
+                            className="p-1.5 rounded hover:bg-rose-950/40 text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer disabled:opacity-40"
+                            title="Excluir material (Exclusivo ADMIN)"
+                            aria-label={`Excluir ${p.nome}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </>
                     )}
                   </td>
@@ -556,6 +589,69 @@ export default function ProdutosPage() {
                   <span>
                     {produtoParaAlternarStatus.ativo ? 'Confirmar Desativação' : 'Confirmar Reativação'}
                   </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Interno de Confirmação de Exclusão Física (ADMIN) */}
+      {produtoParaExcluir && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !excluindoId) setProdutoParaExcluir(null);
+          }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-rose-950/80 border border-rose-800 flex items-center justify-center text-rose-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-zinc-100 text-sm">
+                  Confirmar Exclusão de Material
+                </h3>
+                <span className="font-mono text-xs text-amber-400">
+                  {produtoParaExcluir.codigo} — {produtoParaExcluir.nome}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-zinc-950/70 border border-zinc-800/80 rounded-lg text-xs text-zinc-300 space-y-2">
+              <p className="leading-relaxed text-zinc-300">
+                A exclusão física só é permitida se este material <strong>nunca tiver registrado nenhuma movimentação, lote ou conferência física</strong>.
+              </p>
+              <div className="p-2.5 rounded bg-amber-950/30 border border-amber-800/50 text-[11px] text-amber-300 font-mono">
+                Aviso: Se houver qualquer histórico no livro-razão contábil, a exclusão será bloqueada pelo servidor e o material deverá ser desativado.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={Boolean(excluindoId)}
+                onClick={() => setProdutoParaExcluir(null)}
+                className="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(excluindoId)}
+                onClick={handleConfirmarExclusao}
+                className="px-4 py-2 rounded-md text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white shadow"
+              >
+                {excluindoId ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Excluindo...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Exclusão</span>
                 )}
               </button>
             </div>

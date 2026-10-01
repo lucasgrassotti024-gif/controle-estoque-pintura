@@ -10,6 +10,7 @@ import { DetalheProdutoModal } from '@/components/modules/estoque/detalhe-produt
 import { EntradaFormModal } from '@/components/modules/estoque/entrada-form-modal';
 import { SaidaFormModal } from '@/components/modules/estoque/saida-form-modal';
 import { ConferenciaFormModal } from '@/components/modules/conferencias/conferencia-form-modal';
+import { AjusteEstoqueModal } from '@/components/modules/estoque/ajuste-estoque-modal';
 import { useAuth } from '@/contexts/auth-context';
 import { 
   Boxes, 
@@ -19,12 +20,14 @@ import {
   ArrowDownLeft, 
   ArrowUpRight,
   ClipboardCheck,
-  CheckCircle2 
+  CheckCircle2,
+  Sliders
 } from 'lucide-react';
 
 export default function EstoquePage() {
   const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
   const podeMovimentar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
+  const podeAjustar = !!usuario && usuario.ativo && usuario.papel === 'ADMIN';
 
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -45,6 +48,8 @@ export default function EstoquePage() {
   const [produtoParaSaida, setProdutoParaSaida] = useState<Produto | null>(null);
   const [modalConferenciaAberto, setModalConferenciaAberto] = useState(false);
   const [produtoParaConferencia, setProdutoParaConferencia] = useState<Produto | null>(null);
+  const [modalAjusteAberto, setModalAjusteAberto] = useState(false);
+  const [produtoParaAjuste, setProdutoParaAjuste] = useState<Produto | null>(null);
 
   async function carregarProdutos() {
     setCarregando(true);
@@ -160,6 +165,19 @@ export default function EstoquePage() {
       await carregarProdutos();
       setMensagemSucesso('Conferência física gravada no banco.');
     }
+
+    setTimeout(() => setMensagemSucesso(null), 5000);
+  }
+
+  // Callback acionado após sucesso do Ajuste Administrativo de Estoque (ADMIN)
+  async function handleSucessoAjuste(resultado: ResultadoOperacaoEstoque) {
+    setModalAjusteAberto(false);
+    setProdutoParaAjuste(null);
+
+    await carregarProdutos();
+    setMensagemSucesso(
+      resultado.mensagem || 'Ajuste administrativo de estoque processado e auditado com sucesso!'
+    );
 
     setTimeout(() => setMensagemSucesso(null), 5000);
   }
@@ -300,6 +318,7 @@ export default function EstoquePage() {
           itens={itensComSituacao}
           onSelecionarProduto={(p) => setProdutoSelecionado(p)}
           podeMovimentar={podeMovimentar}
+          podeAjustar={podeAjustar}
           onRegistrarEntrada={(p) => {
             setProdutoParaEntrada(p);
             setModalEntradaAberto(true);
@@ -311,6 +330,10 @@ export default function EstoquePage() {
           onRealizarConferencia={(p) => {
             setProdutoParaConferencia(p);
             setModalConferenciaAberto(true);
+          }}
+          onAjustarEstoque={(p) => {
+            setProdutoParaAjuste(p);
+            setModalAjusteAberto(true);
           }}
         />
       )}
@@ -363,6 +386,18 @@ export default function EstoquePage() {
           aoFechar={() => {
             setModalConferenciaAberto(false);
             setProdutoParaConferencia(null);
+          }}
+        />
+      )}
+
+      {/* Modal Administrativo de Ajuste de Estoque (Exclusivo ADMIN) */}
+      {modalAjusteAberto && produtoParaAjuste && (
+        <AjusteEstoqueModal
+          produto={produtoParaAjuste}
+          aoSucesso={handleSucessoAjuste}
+          aoFechar={() => {
+            setModalAjusteAberto(false);
+            setProdutoParaAjuste(null);
           }}
         />
       )}

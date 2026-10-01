@@ -125,5 +125,12 @@ export const productService = {
       throw new Error('ID do produto é obrigatório.');
     }
     return await productRepository.alterarStatusAtivo(id, ativo);
+  },
+
+  async excluir(id: string): Promise<{ sucesso: boolean; mensagem: string }> {
+    if (!id || !id.trim()) {
+      throw new Error('ID do produto é obrigatório.');
+    }
+    return await productRepository.excluir(id);
   }
 };

@@ -11,8 +11,11 @@ import {
   XCircle, 
   AlertCircle, 
   Loader2, 
-  RefreshCw 
+  RefreshCw,
+  Edit3,
+  Trash2
 } from 'lucide-react';
+import { UsuarioEditModal } from '@/components/modules/usuarios/usuario-edit-modal';
 
 export default function UsuariosPage() {
   const { usuario: usuarioLogado } = useAuth();
@@ -33,6 +36,11 @@ export default function UsuariosPage() {
 
   // Ação em andamento em um usuário da lista
   const [uidEmAtualizacao, setUidEmAtualizacao] = useState<string | null>(null);
+  const [excluindoUid, setExcluindoUid] = useState<string | null>(null);
+
+  // Modais de edição e exclusão
+  const [usuarioParaEditar, setUsuarioParaEditar] = useState<Usuario | null>(null);
+  const [usuarioParaExcluir, setUsuarioParaExcluir] = useState<Usuario | null>(null);
 
   async function carregarUsuarios() {
     setCarregando(true);
@@ -156,6 +164,42 @@ export default function UsuariosPage() {
     } finally {
       setUidEmAtualizacao(null);
     }
+  }
+
+  async function handleConfirmarExcluirUsuario() {
+    if (!usuarioParaExcluir) return;
+    const u = usuarioParaExcluir;
+
+    setExcluindoUid(u.uid);
+    setErro(null);
+    setSucesso(null);
+
+    try {
+      const res = await fetch(`/api/usuarios?uid=${encodeURIComponent(u.uid)}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao excluir usuário.');
+      }
+
+      setSucesso(data.mensagem || `Usuário "${u.nome}" excluído com sucesso.`);
+      setUsuarioParaExcluir(null);
+      await carregarUsuarios();
+    } catch (err: any) {
+      setErro(err.message || 'Erro ao processar exclusão de usuário.');
+    } finally {
+      setExcluindoUid(null);
+    }
+  }
+
+  function handleSucessoEditar(usuarioAtualizado: Usuario) {
+    setUsuarios((prev) =>
+      prev.map((u) => (u.uid === usuarioAtualizado.uid ? usuarioAtualizado : u))
+    );
+    setSucesso(`Dados do usuário "${usuarioAtualizado.nome}" atualizados com sucesso.`);
+    setUsuarioParaEditar(null);
   }
 
   if (!isAdmin) {
@@ -285,23 +329,54 @@ export default function UsuariosPage() {
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap space-x-1">
+                        <button
+                          onClick={() => setUsuarioParaEditar(u)}
+                          disabled={emAtualizacao}
+                          className="p-1.5 rounded border border-zinc-700 bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition cursor-pointer"
+                          title="Editar Nome e Permissão"
+                          aria-label={`Editar ${u.nome}`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+
                         <button
                           onClick={() => handleAlterarStatus(u)}
-                          disabled={emAtualizacao}
-                          className={`text-xs px-3 py-1.5 rounded-md border font-medium transition ${
+                          disabled={emAtualizacao || (usuarioLogado?.uid === u.uid && u.ativo)}
+                          className={`text-xs px-2.5 py-1 rounded border font-medium transition cursor-pointer ${
                             u.ativo
                               ? 'border-red-800/60 text-red-400 hover:bg-red-950/40'
                               : 'border-emerald-800/60 text-emerald-400 hover:bg-emerald-950/40'
-                          } disabled:opacity-50`}
+                          } disabled:opacity-40 disabled:cursor-not-allowed`}
+                          title={
+                            usuarioLogado?.uid === u.uid && u.ativo
+                              ? 'Você não pode desativar sua própria conta'
+                              : u.ativo
+                              ? 'Desativar usuário'
+                              : 'Ativar usuário'
+                          }
                         >
                           {emAtualizacao ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <Loader2 className="w-3 h-3 animate-spin" />
                           ) : u.ativo ? (
                             'Desativar'
                           ) : (
                             'Ativar'
                           )}
+                        </button>
+
+                        <button
+                          onClick={() => setUsuarioParaExcluir(u)}
+                          disabled={emAtualizacao || usuarioLogado?.uid === u.uid}
+                          className="p-1.5 rounded border border-red-900/60 bg-red-950/30 text-red-400 hover:bg-red-900/50 hover:text-red-200 transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={
+                            usuarioLogado?.uid === u.uid
+                              ? 'Você não pode excluir sua própria conta'
+                              : 'Excluir usuário (requer sem histórico)'
+                          }
+                          aria-label={`Excluir ${u.nome}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -418,6 +493,78 @@ export default function UsuariosPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Usuário (ADMIN) */}
+      {usuarioParaEditar && (
+        <UsuarioEditModal
+          usuario={usuarioParaEditar}
+          aoSalvarSucesso={handleSucessoEditar}
+          aoFechar={() => setUsuarioParaEditar(null)}
+        />
+      )}
+
+      {/* Modal de Confirmação de Exclusão Física de Usuário (ADMIN) */}
+      {usuarioParaExcluir && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !excluindoUid) setUsuarioParaExcluir(null);
+          }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-rose-950/80 border border-rose-800 flex items-center justify-center text-rose-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-zinc-100 text-sm">
+                  Confirmar Exclusão de Usuário
+                </h3>
+                <span className="font-mono text-xs text-purple-400">
+                  {usuarioParaExcluir.nome} ({usuarioParaExcluir.email})
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-zinc-950/70 border border-zinc-800/80 rounded-lg text-xs text-zinc-300 space-y-2">
+              <p className="leading-relaxed">
+                A exclusão definitiva só será permitida se este usuário <strong>nunca tiver registrado nenhuma movimentação, conferência ou ajuste no sistema</strong>.
+              </p>
+              <div className="p-2.5 rounded bg-amber-950/30 border border-amber-800/50 text-[11px] text-amber-300 font-mono">
+                Regra: Se possuir histórico operacional, a exclusão física será recusada pelo servidor e você deverá optar pela desativação.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                disabled={Boolean(excluindoUid)}
+                onClick={() => setUsuarioParaExcluir(null)}
+                className="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(excluindoUid)}
+                onClick={handleConfirmarExcluirUsuario}
+                className="px-4 py-2 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white shadow"
+              >
+                {excluindoUid ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Excluindo...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Exclusão</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

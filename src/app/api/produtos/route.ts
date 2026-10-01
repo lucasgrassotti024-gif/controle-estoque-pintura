@@ -140,3 +140,33 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
+export async function DELETE(req: NextRequest) {
+  // Exclusivo ADMIN
+  const auth = await requirePermission(req, 'ESTOQUE_AJUSTAR');
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ erro: 'ID do produto é obrigatório.' }, { status: 400 });
+    }
+
+    const resultado = await stockServerService.excluirProduto(id, {
+      uid: auth.usuario.uid,
+      nome: auth.usuario.nome || 'Administrador',
+    });
+
+    return NextResponse.json(resultado, { status: 200 });
+  } catch (error: any) {
+    const status = error?.statusCode || 400;
+    return NextResponse.json(
+      { erro: error?.message || 'Erro ao excluir produto.' },
+      { status }
+    );
+  }
+}
+

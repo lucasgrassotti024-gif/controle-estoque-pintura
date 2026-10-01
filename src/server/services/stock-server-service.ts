@@ -15,7 +15,9 @@ import {
   CriarUsuarioDTO,
   AtualizarUsuarioDTO,
   PapelUsuario,
-  IdempotencyRecordDocument
+  IdempotencyRecordDocument,
+  RegistrarAjusteEstoqueDTO,
+  AuditLogAdmin
 } from '@/types/stock';
 import { 
   calcularPayloadHash, 
@@ -709,6 +711,247 @@ export const stockServerService = {
   },
 
   /**
+   * Registra Ajuste Administrativo de Estoque de forma atômica no servidor.
+   * Exclusivo para administradores. Atualiza saldos, version, registra movimentação
+   * (AJUSTE_ENTRADA ou AJUSTE_SAIDA), grava audit_logs e respeita barreira de idempotência.
+   */
+  async registrarAjusteEstoque(
+    dto: RegistrarAjusteEstoqueDTO,
+    usuarioAutenticado: UsuarioAutenticadoOperacao
+  ): Promise<ResultadoOperacaoEstoque> {
+    if (!dto.produto_id) {
+      throw new Error('ID do produto é obrigatório.');
+    }
+    if (typeof dto.novo_saldo !== 'number' || dto.novo_saldo < 0) {
+      throw new Error('O novo saldo informado não pode ser negativo.');
+    }
+    if (!dto.justificativa || !dto.justificativa.trim()) {
+      throw new Error('Justificativa obrigatória para ajuste administrativo de estoque.');
+    }
+
+    const adminUid = usuarioAutenticado.uid;
+    const adminNome = usuarioAutenticado.nome;
+    const justificativaLimpa = dto.justificativa.trim();
+
+    const idempotencyKey = dto.idempotency_key?.trim() || null;
+    const payloadHash = idempotencyKey ? calcularPayloadHash(dto) : null;
+    const ttlExpiracao = idempotencyKey ? calcularDataExpiracaoTTL() : null;
+
+    return await adminDb.runTransaction(async (transaction: Transaction) => {
+      // 0. Barreira de Idempotência Atômica
+      let idmpRef: DocumentReference | null = null;
+      if (idempotencyKey) {
+        idmpRef = adminDb.collection(COLLECTIONS.IDEMPOTENCY_RECORDS).doc(idempotencyKey);
+        const idmpSnap = await transaction.get(idmpRef);
+
+        if (idmpSnap.exists) {
+          const idmpData = idmpSnap.data() as IdempotencyRecordDocument;
+
+          if (idmpData.usuario_uid !== adminUid) {
+            const erro: any = new Error(
+              `Violação de Segurança: A chave de idempotência '${idempotencyKey}' pertence a outro usuário.`
+            );
+            erro.statusCode = 403;
+            erro.codigo = 'IDEMPOTENCY_KEY_HIJACKING';
+            throw erro;
+          }
+
+          if (idmpData.payload_hash !== payloadHash) {
+            const erro: any = new Error(
+              `Violação de Integridade: A chave de idempotência '${idempotencyKey}' já foi utilizada com payload diferente.`
+            );
+            erro.statusCode = 422;
+            erro.codigo = 'IDEMPOTENCY_PAYLOAD_TAMPERING';
+            throw erro;
+          }
+
+          return {
+            ...idmpData.response_body,
+            replayed: true,
+          };
+        }
+      }
+
+      // 1. Ler Produto
+      const prodRef = adminDb.collection(COLLECTIONS.PRODUCTS).doc(dto.produto_id);
+      const prodSnap = await transaction.get(prodRef);
+
+      if (!prodSnap.exists) {
+        throw new Error('Produto não encontrado ou inativo.');
+      }
+
+      const produto = prodSnap.data() as Produto;
+      if (!produto.ativo) {
+        throw new Error('Produto não encontrado ou inativo.');
+      }
+
+      const versaoAtualProd = typeof produto.version === 'number' ? produto.version : 1;
+      const novaVersaoProd = versaoAtualProd + 1;
+
+      // Concorrência: Snapshot version
+      if (typeof dto.snapshot_version_produto === 'number' && dto.snapshot_version_produto < versaoAtualProd) {
+        const erroConflito: any = new Error(
+          `Conflito de Concorrência: O produto foi modificado concorrentemente (Versão snapshot: ${dto.snapshot_version_produto}, Servidor: ${versaoAtualProd}). Recarregue os dados antes de ajustar.`
+        );
+        erroConflito.statusCode = 409;
+        erroConflito.codigo = 'STALE_AUDIT_SNAPSHOT';
+        throw erroConflito;
+      }
+
+      const saldoAntProd = produto.saldo_atual || 0;
+      let saldoPosProd: number;
+      let diferenca: number;
+      let loteRef: DocumentReference | null = null;
+      let saldoAntLote = 0;
+      let novaVersaoLote: number | undefined = undefined;
+
+      // 2. Validação e cálculo por modalidade (com lote ou sem lote)
+      if (produto.controla_lote) {
+        if (!dto.lote_id) {
+          throw new Error('Lote obrigatório: ajuste de produto com controle de lote deve especificar o lote de origem.');
+        }
+
+        loteRef = adminDb.collection(COLLECTIONS.LOTS).doc(dto.lote_id);
+        const loteSnap = await transaction.get(loteRef);
+
+        if (!loteSnap.exists) {
+          throw new Error('Lote não encontrado ou inativo.');
+        }
+
+        const lote = loteSnap.data() as Lote;
+        if (!lote.ativo) {
+          throw new Error('Lote não encontrado ou inativo.');
+        }
+
+        if (lote.produto_id !== dto.produto_id) {
+          throw new Error('Inconsistência: o lote informado não pertence a este produto.');
+        }
+
+        const versaoAtualLote = typeof lote.version === 'number' ? lote.version : 1;
+        if (typeof dto.snapshot_version_lote === 'number' && dto.snapshot_version_lote < versaoAtualLote) {
+          const erroConflito: any = new Error(
+            `Conflito de Concorrência no Lote (Versão snapshot: ${dto.snapshot_version_lote}, Servidor: ${versaoAtualLote}). Recarregue os dados.`
+          );
+          erroConflito.statusCode = 409;
+          erroConflito.codigo = 'STALE_AUDIT_SNAPSHOT';
+          throw erroConflito;
+        }
+
+        novaVersaoLote = versaoAtualLote + 1;
+        saldoAntLote = lote.saldo_lote || 0;
+        diferenca = dto.novo_saldo - saldoAntLote;
+        saldoPosProd = saldoAntProd + diferenca;
+
+        if (saldoPosProd < 0) {
+          throw new Error(`Inconsistência: ajuste do lote resultaria em saldo negativo (${saldoPosProd}) no produto.`);
+        }
+      } else {
+        diferenca = dto.novo_saldo - saldoAntProd;
+        saldoPosProd = dto.novo_saldo;
+      }
+
+      if (diferenca === 0) {
+        throw new Error('O novo saldo informado é idêntico ao saldo atual. Nenhum ajuste necessário.');
+      }
+
+      const tipoMovimento = diferenca > 0 ? 'AJUSTE_ENTRADA' : 'AJUSTE_SAIDA';
+      const quantidadeMovimento = Math.abs(diferenca);
+      const now = new Date().toISOString();
+
+      // 3. Atualizar Produto
+      transaction.update(prodRef, {
+        saldo_atual: saldoPosProd,
+        version: novaVersaoProd,
+        atualizado_em: now,
+      });
+
+      // 4. Atualizar Lote (se aplicável)
+      if (loteRef && produto.controla_lote) {
+        transaction.update(loteRef, {
+          saldo_lote: dto.novo_saldo,
+          version: novaVersaoLote,
+        });
+      }
+
+      // 5. Gravar Movimentação no Ledger Append-Only
+      const movRef = adminDb.collection(COLLECTIONS.MOVEMENTS).doc();
+      const movimentacao: Omit<Movimentacao, 'id'> = {
+        produto_id: dto.produto_id,
+        lote_id: dto.lote_id || null,
+        tipo: tipoMovimento,
+        quantidade: quantidadeMovimento,
+        saldo_anterior: produto.controla_lote ? saldoAntLote : saldoAntProd,
+        saldo_posterior: dto.novo_saldo,
+        justificativa: justificativaLimpa,
+        observacao: dto.observacao?.trim() || 'Ajuste administrativo de estoque',
+        usuario_id: adminUid,
+        idempotency_key: idempotencyKey,
+        device_id: dto.device_id || null,
+        local_sequence_number: dto.local_sequence_number || null,
+        criado_em: now,
+        usuario_nome: adminNome,
+      };
+      transaction.set(movRef, movimentacao);
+
+      // 6. Gravar Audit Log Imutável
+      const auditRef = adminDb.collection(COLLECTIONS.AUDIT_LOGS).doc();
+      const auditLog: AuditLogAdmin = {
+        acao: 'ESTOQUE_AJUSTADO',
+        entidade: 'stock',
+        entidade_id: dto.produto_id,
+        executor_uid: adminUid,
+        executor_nome: adminNome,
+        dados_anteriores: {
+          saldo_produto: saldoAntProd,
+          saldo_lote: produto.controla_lote ? saldoAntLote : null,
+          version_produto: versaoAtualProd,
+        },
+        dados_posteriores: {
+          saldo_produto: saldoPosProd,
+          saldo_lote: produto.controla_lote ? dto.novo_saldo : null,
+          version_produto: novaVersaoProd,
+          diferenca,
+        },
+        justificativa: justificativaLimpa,
+        criado_em: now,
+      };
+      transaction.set(auditRef, auditLog);
+
+      const resultado: ResultadoOperacaoEstoque = {
+        sucesso: true,
+        mensagem: `Ajuste administrativo de estoque realizado com sucesso. Saldo anterior: ${saldoAntProd}, Novo saldo: ${saldoPosProd}.`,
+        movimentacao_id: movRef.id,
+        saldo_anterior: saldoAntProd,
+        saldo_posterior: saldoPosProd,
+        diferenca,
+        lote_id: dto.lote_id || null,
+        version_produto: novaVersaoProd,
+        version_lote: novaVersaoLote,
+      };
+
+      // 7. Gravar Registro de Idempotência se chave fornecida
+      if (idmpRef && idempotencyKey && payloadHash && ttlExpiracao) {
+        const idmpRecord: IdempotencyRecordDocument = {
+          idempotency_key: idempotencyKey,
+          status: 'COMPLETED',
+          usuario_uid: adminUid,
+          device_id: dto.device_id || null,
+          local_sequence_number: dto.local_sequence_number || null,
+          payload_hash: payloadHash,
+          endpoint: '/api/estoque/ajuste',
+          response_status: 200,
+          response_body: resultado,
+          criado_em: now,
+          expira_em: ttlExpiracao,
+        };
+        transaction.set(idmpRef, idmpRecord);
+      }
+
+      return resultado;
+    });
+  },
+
+  /**
    * Criação de Produto Server-side (assegura saldo_atual = 0 e código único)
    */
   async criarProduto(dto: CriarProdutoDTO): Promise<Produto> {
@@ -838,6 +1081,174 @@ export const stockServerService = {
       ...atual,
       ativo,
       atualizado_em: now,
+    };
+  },
+
+  /**
+   * Exclusão Física de Produto com auditoria e barreira de integridade referencial.
+   * Só permite exclusão se NÃO houver movements, lots ou physicalCounts.
+   * Caso contrário, lança erro com statusCode 409 instruindo desativação.
+   */
+  async excluirProduto(
+    id: string,
+    usuarioAutenticado: UsuarioAutenticadoOperacao
+  ): Promise<{ sucesso: boolean; mensagem: string }> {
+    const docRef = adminDb.collection(COLLECTIONS.PRODUCTS).doc(id);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      throw new Error('Produto não encontrado.');
+    }
+
+    const produto = snap.data() as Produto;
+
+    // 1. Verificar movements
+    const movementsSnap = await adminDb
+      .collection(COLLECTIONS.MOVEMENTS)
+      .where('produto_id', '==', id)
+      .limit(1)
+      .get();
+
+    if (!movementsSnap.empty) {
+      const err: any = new Error(
+        'Este produto possui histórico de movimentações e não pode ser excluído fisicamente. Utilize a opção de Desativar.'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 2. Verificar lots
+    const lotsSnap = await adminDb
+      .collection(COLLECTIONS.LOTS)
+      .where('produto_id', '==', id)
+      .limit(1)
+      .get();
+
+    if (!lotsSnap.empty) {
+      const err: any = new Error(
+        'Este produto possui lotes cadastrados e não pode ser excluído fisicamente. Utilize a opção de Desativar.'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 3. Verificar physicalCounts
+    const countsSnap = await adminDb
+      .collection(COLLECTIONS.PHYSICAL_COUNTS)
+      .where('produto_id', '==', id)
+      .limit(1)
+      .get();
+
+    if (!countsSnap.empty) {
+      const err: any = new Error(
+        'Este produto possui histórico de conferências físicas e não pode ser excluído fisicamente. Utilize a opção de Desativar.'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 4. Excluir produto e registrar auditoria
+    const now = new Date().toISOString();
+    await docRef.delete();
+
+    const auditRef = adminDb.collection(COLLECTIONS.AUDIT_LOGS).doc();
+    const auditLog: AuditLogAdmin = {
+      acao: 'PRODUTO_EXCLUIDO',
+      entidade: 'products',
+      entidade_id: id,
+      executor_uid: usuarioAutenticado.uid,
+      executor_nome: usuarioAutenticado.nome,
+      dados_anteriores: produto,
+      criado_em: now,
+    };
+    await auditRef.set(auditLog);
+
+    return {
+      sucesso: true,
+      mensagem: `Material "${produto.nome}" (${produto.codigo}) excluído com sucesso.`,
+    };
+  },
+
+  /**
+   * Exclusão ou Desativação Administrativa de Lote
+   * - Saldo > 0 -> Proibido excluir (exige ajuste administrativo prévio).
+   * - Saldo = 0 + movimentações associadas -> Desativação lógica (ativo: false).
+   * - Saldo = 0 + sem movimentações -> Exclusão física permitida.
+   */
+  async excluirLote(
+    id: string,
+    usuarioAutenticado: UsuarioAutenticadoOperacao
+  ): Promise<{ sucesso: boolean; mensagem: string; tipo_acao: 'DESATIVADO' | 'EXCLUIDO' }> {
+    const loteRef = adminDb.collection(COLLECTIONS.LOTS).doc(id);
+    const snap = await loteRef.get();
+
+    if (!snap.exists) {
+      throw new Error('Lote não encontrado.');
+    }
+
+    const lote = snap.data() as Lote;
+    const now = new Date().toISOString();
+
+    if (lote.saldo_lote > 0) {
+      const err: any = new Error(
+        `Operação bloqueada: O lote ${lote.numero_lote} possui saldo positivo (${lote.saldo_lote}). É obrigatório realizar um ajuste de estoque para zerar o saldo antes de removê-lo.`
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // Verificar se possui movimentações no ledger
+    const movsSnap = await adminDb
+      .collection(COLLECTIONS.MOVEMENTS)
+      .where('lote_id', '==', id)
+      .limit(1)
+      .get();
+
+    const auditRef = adminDb.collection(COLLECTIONS.AUDIT_LOGS).doc();
+
+    if (!movsSnap.empty) {
+      // Tem histórico -> Desativação Lógica
+      await loteRef.update({ ativo: false });
+
+      const auditLog: AuditLogAdmin = {
+        acao: 'LOTE_DESATIVADO',
+        entidade: 'lots',
+        entidade_id: id,
+        executor_uid: usuarioAutenticado.uid,
+        executor_nome: usuarioAutenticado.nome,
+        dados_anteriores: lote,
+        dados_posteriores: { ...lote, ativo: false },
+        justificativa: 'Lote desativado com saldo zero para preservação de histórico contábil.',
+        criado_em: now,
+      };
+      await auditRef.set(auditLog);
+
+      return {
+        sucesso: true,
+        mensagem: `Lote ${lote.numero_lote} possui histórico de lançamentos e foi desativado logicamente para preservar a integridade contábil.`,
+        tipo_acao: 'DESATIVADO',
+      };
+    }
+
+    // Sem movimentações -> Exclusão Física
+    await loteRef.delete();
+
+    const auditLog: AuditLogAdmin = {
+      acao: 'LOTE_EXCLUIDO',
+      entidade: 'lots',
+      entidade_id: id,
+      executor_uid: usuarioAutenticado.uid,
+      executor_nome: usuarioAutenticado.nome,
+      dados_anteriores: lote,
+      justificativa: 'Lote sem movimentações e com saldo zero excluído fisicamente.',
+      criado_em: now,
+    };
+    await auditRef.set(auditLog);
+
+    return {
+      sucesso: true,
+      mensagem: `Lote ${lote.numero_lote} excluído fisicamente com sucesso.`,
+      tipo_acao: 'EXCLUIDO',
     };
   },
 
@@ -1207,14 +1618,23 @@ export const stockServerService = {
   },
 
   /**
-   * Atualiza papel, nome ou status de ativação de um usuário no Firestore.
+   * Atualiza papel, nome ou status de ativação de um usuário no Firestore com proteções de segurança:
+   * 1. Bloqueia auto-desativação do usuário autenticado.
+   * 2. Bloqueia auto-rebaixamento de perfil do ADMIN autenticado.
+   * 3. Bloqueia desativação ou rebaixamento do último ADMIN ativo do sistema.
+   * 4. Registra auditoria administrativa detalhada.
    */
-  async atualizarUsuario(uid: string, dto: AtualizarUsuarioDTO): Promise<Usuario> {
+  async atualizarUsuario(
+    uid: string, 
+    dto: AtualizarUsuarioDTO,
+    executor?: UsuarioAutenticadoOperacao
+  ): Promise<Usuario> {
     if (!uid || !uid.trim()) {
       throw new Error('UID do usuário é obrigatório.');
     }
 
-    const userRef = adminDb.collection(COLLECTIONS.USERS).doc(uid.trim());
+    const uidAlvo = uid.trim();
+    const userRef = adminDb.collection(COLLECTIONS.USERS).doc(uidAlvo);
     const userSnap = await userRef.get();
 
     if (!userSnap.exists) {
@@ -1222,8 +1642,41 @@ export const stockServerService = {
     }
 
     const dadosAtuais = userSnap.data()!;
+    const papelAtual = dadosAtuais.papel as PapelUsuario;
+    const ativoAtual = dadosAtuais.ativo !== false;
+
+    // Proteções de Autoação
+    if (executor && executor.uid === uidAlvo) {
+      if (typeof dto.ativo === 'boolean' && !dto.ativo) {
+        const err: any = new Error('Operação bloqueada: Você não pode desativar sua própria conta de administrador.');
+        err.statusCode = 409;
+        throw err;
+      }
+      if (dto.papel && dto.papel !== 'ADMIN' && papelAtual === 'ADMIN') {
+        const err: any = new Error('Operação bloqueada: Você não pode remover seu próprio privilégio de administrador.');
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    // Proteções do Último ADMIN Ativo
+    const tentandoDesativarAdmin = papelAtual === 'ADMIN' && ativoAtual && dto.ativo === false;
+    const tentandoRebaixarAdmin = papelAtual === 'ADMIN' && ativoAtual && dto.papel && dto.papel !== 'ADMIN';
+
+    if (tentandoDesativarAdmin || tentandoRebaixarAdmin) {
+      const todosUsuarios = await this.listarUsuarios();
+      const adminsAtivos = todosUsuarios.filter(u => u.papel === 'ADMIN' && u.ativo);
+
+      if (adminsAtivos.length <= 1) {
+        const err: any = new Error('Não é possível remover ou desativar o último administrador ativo do sistema.');
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    const now = new Date().toISOString();
     const atualizacoes: Record<string, any> = {
-      atualizadoEm: new Date().toISOString(),
+      atualizadoEm: now,
     };
 
     if (dto.nome && dto.nome.trim()) {
@@ -1242,12 +1695,12 @@ export const stockServerService = {
 
       // Se desativado, também desativa no Firebase Auth e revoga tokens
       try {
-        await adminAuth.updateUser(uid, { disabled: !dto.ativo });
+        await adminAuth.updateUser(uidAlvo, { disabled: !dto.ativo });
         if (!dto.ativo) {
-          await adminAuth.revokeRefreshTokens(uid);
+          await adminAuth.revokeRefreshTokens(uidAlvo);
         }
       } catch (authErr) {
-        console.warn(`Aviso: Não foi possível sincronizar status no Firebase Auth para ${uid}`, authErr);
+        console.warn(`Aviso: Não foi possível sincronizar status no Firebase Auth para ${uidAlvo}`, authErr);
       }
     }
 
@@ -1259,6 +1712,30 @@ export const stockServerService = {
       ? d.papel
       : 'CONSULTA';
 
+    // Gravar Trilha de Auditoria Administrativa
+    if (executor) {
+      const auditRef = adminDb.collection(COLLECTIONS.AUDIT_LOGS).doc();
+      let acaoAuditoria: AuditLogAdmin['acao'] = 'USUARIO_EDITADO';
+
+      if (typeof dto.ativo === 'boolean' && dto.ativo !== ativoAtual) {
+        acaoAuditoria = dto.ativo ? 'USUARIO_ATIVADO' : 'USUARIO_DESATIVADO';
+      } else if (dto.papel && dto.papel !== papelAtual) {
+        acaoAuditoria = 'USUARIO_PERFIL_ALTERADO';
+      }
+
+      const auditLog: AuditLogAdmin = {
+        acao: acaoAuditoria,
+        entidade: 'users',
+        entidade_id: uidAlvo,
+        executor_uid: executor.uid,
+        executor_nome: executor.nome,
+        dados_anteriores: { nome: dadosAtuais.nome, papel: papelAtual, ativo: ativoAtual },
+        dados_posteriores: { nome: d.nome, papel: papelValido, ativo: d.ativo !== false },
+        criado_em: now,
+      };
+      await auditRef.set(auditLog);
+    }
+
     return {
       id: docAtualizado.id,
       uid: docAtualizado.id,
@@ -1268,6 +1745,115 @@ export const stockServerService = {
       ativo: d.ativo !== false,
       criadoEm: d.criadoEm || d.criado_em,
       atualizadoEm: d.atualizadoEm || d.atualizado_em,
+    };
+  },
+
+  /**
+   * Exclusão Física de Usuário com validações estritas de segurança:
+   * 1. Bloqueia autoexclusão da própria conta autenticada.
+   * 2. Bloqueia exclusão do último ADMIN ativo.
+   * 3. Bloqueia exclusão física se o usuário possuir histórico operacional (movements, physicalCounts, etc.).
+   *    Retorna HTTP 409 orientando desativação lógica.
+   * 4. Se elegível, remove do Firebase Authentication e do Firestore users/{uid}.
+   * 5. Grava audit_logs da operação.
+   */
+  async excluirUsuario(
+    uid: string,
+    executor: UsuarioAutenticadoOperacao
+  ): Promise<{ sucesso: boolean; mensagem: string }> {
+    if (!uid || !uid.trim()) {
+      throw new Error('UID do usuário é obrigatório.');
+    }
+
+    const uidAlvo = uid.trim();
+
+    // 1. Bloqueio de Autoexclusão
+    if (executor.uid === uidAlvo) {
+      const err: any = new Error('Operação bloqueada: Você não pode excluir sua própria conta de usuário.');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const userRef = adminDb.collection(COLLECTIONS.USERS).doc(uidAlvo);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      throw new Error('Usuário não encontrado.');
+    }
+
+    const userData = userSnap.data() as Usuario;
+
+    // 2. Bloqueio do Último ADMIN Ativo
+    if (userData.papel === 'ADMIN' && userData.ativo !== false) {
+      const todosUsuarios = await this.listarUsuarios();
+      const adminsAtivos = todosUsuarios.filter(u => u.papel === 'ADMIN' && u.ativo);
+
+      if (adminsAtivos.length <= 1) {
+        const err: any = new Error('Não é possível remover ou desativar o último administrador ativo do sistema.');
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    // 3. Verificação de Histórico Operacional em Movements
+    const movsSnap = await adminDb
+      .collection(COLLECTIONS.MOVEMENTS)
+      .where('usuario_id', '==', uidAlvo)
+      .limit(1)
+      .get();
+
+    if (!movsSnap.empty) {
+      const err: any = new Error(
+        'Este usuário possui histórico de movimentações no sistema e não pode ser excluído fisicamente. Utilize a opção de Desativar.'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 4. Verificação de Histórico em Conferências Físicas
+    const countsSnap = await adminDb
+      .collection(COLLECTIONS.PHYSICAL_COUNTS)
+      .where('realizado_por', '==', uidAlvo)
+      .limit(1)
+      .get();
+
+    if (!countsSnap.empty) {
+      const err: any = new Error(
+        'Este usuário possui histórico de conferências físicas e não pode ser excluído fisicamente. Utilize a opção de Desativar.'
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 5. Exclusão no Firebase Authentication e no Firestore
+    try {
+      await adminAuth.deleteUser(uidAlvo);
+    } catch (authErr: any) {
+      // Se não encontrado no Auth, prossegue para limpeza no Firestore
+      if (authErr?.code !== 'auth/user-not-found') {
+        console.warn(`Aviso ao excluir do Firebase Auth: ${authErr?.message}`);
+      }
+    }
+
+    await userRef.delete();
+
+    // 6. Gravar Auditoria Administrativa
+    const now = new Date().toISOString();
+    const auditRef = adminDb.collection(COLLECTIONS.AUDIT_LOGS).doc();
+    const auditLog: AuditLogAdmin = {
+      acao: 'USUARIO_EXCLUIDO',
+      entidade: 'users',
+      entidade_id: uidAlvo,
+      executor_uid: executor.uid,
+      executor_nome: executor.nome,
+      dados_anteriores: userData,
+      criado_em: now,
+    };
+    await auditRef.set(auditLog);
+
+    return {
+      sucesso: true,
+      mensagem: `Usuário "${userData.nome}" (${userData.email}) excluído com sucesso.`,
     };
   },
 };

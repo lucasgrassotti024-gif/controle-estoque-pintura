@@ -2,6 +2,7 @@ import {
   RegistrarEntradaDTO, 
   RegistrarSaidaDTO, 
   RegistrarConferenciaDTO,
+  RegistrarAjusteEstoqueDTO,
   ResultadoOperacaoEstoque,
   Movimentacao,
   ConferenciaFisica,
@@ -76,6 +77,25 @@ export const stockRepository = {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.erro || 'Erro ao registrar conferência física.');
+      }
+
+      return data as ResultadoOperacaoEstoque;
+    } catch (error: any) {
+      throw new Error(formatarErroBanco(error).mensagem);
+    }
+  },
+
+  async registrarAjusteEstoque(dto: RegistrarAjusteEstoqueDTO): Promise<ResultadoOperacaoEstoque> {
+    try {
+      const res = await fetch('/api/estoque/ajuste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dto),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao realizar ajuste de estoque no servidor.');
       }
 
       return data as ResultadoOperacaoEstoque;

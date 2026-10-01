@@ -8,7 +8,8 @@ import {
   ArrowDownLeft, 
   ArrowUpRight, 
   ClipboardCheck,
-  Eye
+  Eye,
+  Sliders
 } from 'lucide-react';
 
 interface TabelaEstoqueProps {
@@ -18,18 +19,22 @@ interface TabelaEstoqueProps {
   }[];
   onSelecionarProduto: (produto: Produto) => void;
   podeMovimentar?: boolean;
+  podeAjustar?: boolean;
   onRegistrarEntrada?: (produto: Produto) => void;
   onRegistrarSaida?: (produto: Produto) => void;
   onRealizarConferencia?: (produto: Produto) => void;
+  onAjustarEstoque?: (produto: Produto) => void;
 }
 
 export function TabelaEstoque({ 
   itens, 
   onSelecionarProduto,
   podeMovimentar = false,
+  podeAjustar = false,
   onRegistrarEntrada,
   onRegistrarSaida,
   onRealizarConferencia,
+  onAjustarEstoque,
 }: TabelaEstoqueProps) {
   return (
     <>
@@ -142,6 +147,16 @@ export function TabelaEstoque({
                       </button>
                     </>
                   )}
+                  {podeAjustar && (
+                    <button
+                      onClick={() => onAjustarEstoque?.(produto)}
+                      className="p-1.5 rounded hover:bg-purple-950/40 text-zinc-400 hover:text-purple-400 transition-colors cursor-pointer"
+                      title="Ajuste administrativo de estoque (ADMIN)"
+                      aria-label={`Ajuste administrativo de ${produto.nome}`}
+                    >
+                      <Sliders className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={() => onSelecionarProduto(produto)}
                     className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
@@ -229,6 +244,16 @@ export function TabelaEstoque({
                   >
                     <ClipboardCheck className="w-3.5 h-3.5" />
                   </button>
+                  {podeAjustar && (
+                    <button
+                      onClick={() => onAjustarEstoque?.(produto)}
+                      className="p-1.5 rounded bg-purple-950/60 border border-purple-800/60 text-purple-400 text-xs font-mono cursor-pointer"
+                      title="Ajuste Administrativo"
+                      aria-label={`Ajuste administrativo de ${produto.nome}`}
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ) : (
                 <button

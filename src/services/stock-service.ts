@@ -5,6 +5,7 @@ import {
   RegistrarEntradaDTO, 
   RegistrarSaidaDTO, 
   RegistrarConferenciaDTO,
+  RegistrarAjusteEstoqueDTO,
   ResultadoOperacaoEstoque,
   ConsultaEstoqueProduto,
   Movimentacao,
@@ -141,6 +142,20 @@ export const stockService = {
     }
 
     return await stockRepository.registrarConferenciaFisica(dto);
+  },
+
+  async ajustarEstoque(dto: RegistrarAjusteEstoqueDTO): Promise<ResultadoOperacaoEstoque> {
+    if (!dto.produto_id || !dto.produto_id.trim()) {
+      throw new Error('ID do produto é obrigatório.');
+    }
+    if (typeof dto.novo_saldo !== 'number' || isNaN(dto.novo_saldo) || dto.novo_saldo < 0) {
+      throw new Error('O novo saldo informado não pode ser negativo.');
+    }
+    if (!dto.justificativa || !dto.justificativa.trim()) {
+      throw new Error('Justificativa obrigatória para ajuste administrativo de estoque.');
+    }
+
+    return await stockRepository.registrarAjusteEstoque(dto);
   },
 
   // ============================================================================

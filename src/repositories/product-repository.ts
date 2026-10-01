@@ -143,4 +143,19 @@ export const productRepository = {
       throw new Error(formatarErroBanco(error).mensagem);
     }
   },
+
+  async excluir(id: string): Promise<{ sucesso: boolean; mensagem: string }> {
+    try {
+      const res = await fetch(`/api/produtos?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.erro || 'Erro ao excluir produto.');
+      }
+      return data;
+    } catch (error: any) {
+      throw new Error(formatarErroBanco(error).mensagem);
+    }
+  },
 };

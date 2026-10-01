@@ -8,6 +8,7 @@ export type PapelUsuario = 'ADMIN' | 'OPERADOR' | 'CONSULTA';
 export type PermissaoSistema = 
   | 'ESTOQUE_VISUALIZAR'
   | 'ESTOQUE_OPERAR'
+  | 'ESTOQUE_AJUSTAR'
   | 'PRODUTO_GERENCIAR'
   | 'USUARIO_GERENCIAR';
 
@@ -249,6 +250,46 @@ export interface RegistrarConferenciaDTO {
   local_sequence_number?: number | null;
   snapshot_version_produto?: number | null;
   snapshot_version_lote?: number | null;
+}
+
+export interface RegistrarAjusteEstoqueDTO {
+  produto_id: string;
+  novo_saldo: number;
+  justificativa: string;
+  lote_id?: string | null;
+  observacao?: string | null;
+  idempotency_key?: string | null;
+  device_id?: string | null;
+  local_sequence_number?: number | null;
+  snapshot_version_produto?: number | null;
+  snapshot_version_lote?: number | null;
+}
+
+export interface AuditLogAdmin {
+  id?: string;
+  acao: 
+    | 'PRODUTO_CRIADO'
+    | 'PRODUTO_EDITADO'
+    | 'PRODUTO_ATIVADO'
+    | 'PRODUTO_DESATIVADO'
+    | 'PRODUTO_EXCLUIDO'
+    | 'ESTOQUE_AJUSTADO'
+    | 'LOTE_DESATIVADO'
+    | 'LOTE_EXCLUIDO'
+    | 'USUARIO_CRIADO'
+    | 'USUARIO_EDITADO'
+    | 'USUARIO_ATIVADO'
+    | 'USUARIO_DESATIVADO'
+    | 'USUARIO_EXCLUIDO'
+    | 'USUARIO_PERFIL_ALTERADO';
+  entidade: 'products' | 'lots' | 'users' | 'stock';
+  entidade_id: string;
+  executor_uid: string;
+  executor_nome: string;
+  dados_anteriores?: any;
+  dados_posteriores?: any;
+  justificativa?: string | null;
+  criado_em: string;
 }
 
 // ==============================================================================

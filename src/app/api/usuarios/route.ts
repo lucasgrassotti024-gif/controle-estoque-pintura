@@ -83,12 +83,45 @@ export async function PATCH(req: NextRequest) {
       dto.ativo = body.ativo;
     }
 
-    const usuarioAtualizado = await stockServerService.atualizarUsuario(uid, dto);
+    const usuarioAtualizado = await stockServerService.atualizarUsuario(uid, dto, {
+      uid: auth.usuario.uid,
+      nome: auth.usuario.nome || 'Administrador',
+    });
     return NextResponse.json(usuarioAtualizado, { status: 200 });
   } catch (error: any) {
+    const status = error?.statusCode || 400;
     return NextResponse.json(
       { erro: error?.message || 'Erro ao atualizar usuário.' },
-      { status: 400 }
+      { status }
+    );
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const auth = await requirePermission(req, 'USUARIO_GERENCIAR');
+  if ('errorResponse' in auth) {
+    return auth.errorResponse;
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const uid = searchParams.get('uid') || searchParams.get('id');
+
+    if (!uid) {
+      return NextResponse.json({ erro: 'UID do usuário é obrigatório.' }, { status: 400 });
+    }
+
+    const resultado = await stockServerService.excluirUsuario(uid, {
+      uid: auth.usuario.uid,
+      nome: auth.usuario.nome || 'Administrador',
+    });
+
+    return NextResponse.json(resultado, { status: 200 });
+  } catch (error: any) {
+    const status = error?.statusCode || 400;
+    return NextResponse.json(
+      { erro: error?.message || 'Erro ao excluir usuário.' },
+      { status }
     );
   }
 }
