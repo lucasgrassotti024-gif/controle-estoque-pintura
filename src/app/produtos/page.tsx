@@ -5,8 +5,6 @@ import { productService } from '@/services/product-service';
 import { Produto, CategoriaProduto, CATEGORIAS_VALIDAS } from '@/types/stock';
 import { formatarQuantidade } from '@/lib/utils/formatters';
 import { ProdutoFormModal } from '@/components/modules/produtos/produto-form-modal';
-import { EntradaFormModal } from '@/components/modules/estoque/entrada-form-modal';
-import { SaidaFormModal } from '@/components/modules/estoque/saida-form-modal';
 import { useAuth } from '@/contexts/auth-context';
 import { 
   Layers, 
@@ -17,8 +15,6 @@ import {
   Power, 
   AlertCircle, 
   CheckCircle2, 
-  ArrowDownLeft,
-  ArrowUpRight,
   X,
   Trash2
 } from 'lucide-react';
@@ -26,7 +22,6 @@ import {
 export default function ProdutosPage() {
   const { usuario, autenticado, carregando: carregandoAuth } = useAuth();
   const podeGerenciar = !!usuario && usuario.ativo && (usuario.papel === 'ADMIN' || usuario.papel === 'OPERADOR');
-  const podeMovimentar = !!usuario && usuario.ativo && usuario.papel !== 'CONSULTA';
   const isAdmin = !!usuario && usuario.ativo && usuario.papel === 'ADMIN';
 
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -42,10 +37,6 @@ export default function ProdutosPage() {
   // Estados do Modal
   const [modalAberto, setModalAberto] = useState(false);
   const [produtoEmEdicao, setProdutoEmEdicao] = useState<Produto | null>(null);
-  const [modalEntradaAberto, setModalEntradaAberto] = useState(false);
-  const [produtoParaEntrada, setProdutoParaEntrada] = useState<Produto | null>(null);
-  const [modalSaidaAberto, setModalSaidaAberto] = useState(false);
-  const [produtoParaSaida, setProdutoParaSaida] = useState<Produto | null>(null);
   const [alternandoStatusId, setAlternandoStatusId] = useState<string | null>(null);
   const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
@@ -151,35 +142,7 @@ export default function ProdutosPage() {
     setTimeout(() => setMensagemSucesso(null), 4000);
   }
 
-  // Callback de sucesso ao registrar entrada pela lista de produtos
-  async function handleSucessoEntrada(resultado: any, produtoId: string) {
-    setModalEntradaAberto(false);
-    setProdutoParaEntrada(null);
-    try {
-      const atualizado = await productService.buscarPorId(produtoId);
-      setProdutos((prev) => prev.map((p) => (p.id === atualizado.id ? atualizado : p)));
-      setMensagemSucesso(`Entrada registrada com sucesso! Novo saldo de "${atualizado.nome}": ${atualizado.saldo_atual} ${atualizado.unidade_medida}.`);
-    } catch {
-      await carregarProdutos();
-      setMensagemSucesso('Entrada registrada com sucesso.');
-    }
-    setTimeout(() => setMensagemSucesso(null), 5000);
-  }
 
-  // Callback de sucesso ao registrar saída pela lista de produtos
-  async function handleSucessoSaida(resultado: any, produtoId: string) {
-    setModalSaidaAberto(false);
-    setProdutoParaSaida(null);
-    try {
-      const atualizado = await productService.buscarPorId(produtoId);
-      setProdutos((prev) => prev.map((p) => (p.id === atualizado.id ? atualizado : p)));
-      setMensagemSucesso(`Saída registrada com sucesso! Novo saldo de "${atualizado.nome}": ${atualizado.saldo_atual} ${atualizado.unidade_medida}.`);
-    } catch {
-      await carregarProdutos();
-      setMensagemSucesso('Saída registrada com sucesso.');
-    }
-    setTimeout(() => setMensagemSucesso(null), 5000);
-  }
 
   return (
     <div className="space-y-6">
@@ -385,32 +348,7 @@ export default function ProdutosPage() {
                     </span>
                   </td>
                   <td className="py-3 px-4 text-right space-x-1 whitespace-nowrap">
-                    {p.ativo && podeMovimentar && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setProdutoParaEntrada(p);
-                            setModalEntradaAberto(true);
-                          }}
-                          className="p-1.5 rounded hover:bg-emerald-950/40 text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                          title="Registrar entrada de estoque para este material"
-                          aria-label={`Entrada ${p.nome}`}
-                        >
-                          <ArrowDownLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setProdutoParaSaida(p);
-                            setModalSaidaAberto(true);
-                          }}
-                          className="p-1.5 rounded hover:bg-amber-950/40 text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer"
-                          title="Registrar saída de estoque para este material"
-                          aria-label={`Saída ${p.nome}`}
-                        >
-                          <ArrowUpRight className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
+
                     {podeGerenciar && (
                       <>
                         <button
@@ -470,46 +408,7 @@ export default function ProdutosPage() {
         />
       )}
 
-      {/* Modal de Entrada Rápida de Estoque */}
-      {modalEntradaAberto && (
-        <EntradaFormModal
-          produtoInicial={produtoParaEntrada}
-          produtosDisponiveis={produtos}
-          aoSalvarSucesso={async (_resultado, produtoId) => {
-            setModalEntradaAberto(false);
-            setProdutoParaEntrada(null);
-            try {
-              const atualizado = await productService.buscarPorId(produtoId);
-              setProdutos((prev) =>
-                prev.map((p) => (p.id === atualizado.id ? atualizado : p))
-              );
-              setMensagemSucesso(
-                `Entrada registrada com sucesso! Novo saldo: ${atualizado.saldo_atual} ${atualizado.unidade_medida}.`
-              );
-            } catch {
-              await carregarProdutos();
-            }
-            setTimeout(() => setMensagemSucesso(null), 4000);
-          }}
-          aoFechar={() => {
-            setModalEntradaAberto(false);
-            setProdutoParaEntrada(null);
-          }}
-        />
-      )}
 
-      {/* Modal de Saída Rápida de Estoque */}
-      {modalSaidaAberto && (
-        <SaidaFormModal
-          produtoInicial={produtoParaSaida}
-          produtosDisponiveis={produtos}
-          aoSalvarSucesso={handleSucessoSaida}
-          aoFechar={() => {
-            setModalSaidaAberto(false);
-            setProdutoParaSaida(null);
-          }}
-        />
-      )}
 
       {/* Modal Interno de Confirmação de Ativação / Desativação de Material */}
       {produtoParaAlternarStatus && (

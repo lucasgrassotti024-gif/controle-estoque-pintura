@@ -5,8 +5,6 @@ import { formatarQuantidade } from '@/lib/utils/formatters';
 import { 
   Layers, 
   ChevronRight, 
-  ArrowDownLeft, 
-  ArrowUpRight, 
   ClipboardCheck,
   Eye,
   Sliders
@@ -121,23 +119,6 @@ export function TabelaEstoque({
                   {podeMovimentar && (
                     <>
                       <button
-                        onClick={() => onRegistrarEntrada?.(produto)}
-                        className="p-1.5 rounded hover:bg-emerald-950/40 text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                        title="Registrar entrada deste material"
-                        aria-label={`Registrar entrada de ${produto.nome}`}
-                      >
-                        <ArrowDownLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => onRegistrarSaida?.(produto)}
-                        disabled={produto.saldo_atual <= 0}
-                        className="p-1.5 rounded hover:bg-amber-950/40 text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                        title={produto.saldo_atual <= 0 ? 'Sem saldo disponível para saída' : 'Registrar saída deste material'}
-                        aria-label={`Registrar saída de ${produto.nome}`}
-                      >
-                        <ArrowUpRight className="w-4 h-4" />
-                      </button>
-                      <button
                         onClick={() => onRealizarConferencia?.(produto)}
                         className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer"
                         title="Realizar conferência física deste material"
@@ -219,23 +200,6 @@ export function TabelaEstoque({
 
               {podeMovimentar ? (
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => onRegistrarEntrada?.(produto)}
-                    className="p-1.5 rounded bg-emerald-950/60 border border-emerald-800/60 text-emerald-400 text-xs font-mono cursor-pointer"
-                    title="Entrada"
-                    aria-label={`Entrada ${produto.nome}`}
-                  >
-                    <ArrowDownLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => onRegistrarSaida?.(produto)}
-                    disabled={produto.saldo_atual <= 0}
-                    className="p-1.5 rounded bg-amber-950/60 border border-amber-800/60 text-amber-400 text-xs font-mono cursor-pointer disabled:opacity-30"
-                    title="Saída"
-                    aria-label={`Saída ${produto.nome}`}
-                  >
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
                   <button
                     onClick={() => onRealizarConferencia?.(produto)}
                     className="p-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-mono cursor-pointer"
