@@ -131,9 +131,9 @@ export function AjusteEstoqueModal({
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
-        {/* Header com destaque administrativo */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800 bg-zinc-950/80">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        {/* Header com destaque administrativo (Fixo no topo) */}
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800 bg-zinc-950/80 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-amber-950/60 border border-amber-800/80 flex items-center justify-center text-amber-400">
               <Sliders className="w-4 h-4" />
@@ -150,21 +150,23 @@ export function AjusteEstoqueModal({
           <button
             onClick={aoFechar}
             disabled={salvando}
-            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-40"
+            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-40 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Formulário */}
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4 text-sm">
-          {/* Identificação do Material */}
-          <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg">
-            <div className="text-xs font-mono text-zinc-500 uppercase">Material</div>
-            <div className="text-sm font-semibold text-zinc-200">
-              {produto.codigo} — {produto.nome}
+        {/* Formulário com corpo rolável e footer fixo */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Conteúdo rolável */}
+          <div className="p-5 sm:p-6 space-y-4 text-sm overflow-y-auto flex-1 overscroll-contain">
+            {/* Identificação do Material */}
+            <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg">
+              <div className="text-xs font-mono text-zinc-500 uppercase">Material</div>
+              <div className="text-sm font-semibold text-zinc-200">
+                {produto.codigo} — {produto.nome}
+              </div>
             </div>
-          </div>
 
           {/* Seletor de Lote (se aplicável) */}
           {produto.controla_lote && (
@@ -290,21 +292,22 @@ export function AjusteEstoqueModal({
               <span>{erro}</span>
             </div>
           )}
+          </div>
 
-          {/* Botões de Ação */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+          {/* Botões de Ação (Fixos no rodapé do modal) */}
+          <div className="flex items-center justify-end gap-3 p-4 sm:px-6 sm:py-4 border-t border-zinc-800 bg-zinc-950/90 shrink-0">
             <button
               type="button"
               onClick={aoFechar}
               disabled={salvando}
-              className="px-4 py-2 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 text-xs font-medium transition disabled:opacity-40"
+              className="px-4 py-2 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 text-xs font-medium transition disabled:opacity-40 cursor-pointer"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={salvando || isNaN(novoSaldoNum) || diferenca === 0 || !justificativa.trim()}
-              className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-950 font-semibold text-xs rounded-lg shadow transition disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-500 text-zinc-950 font-semibold text-xs rounded-lg shadow transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {salvando ? (
                 <>
